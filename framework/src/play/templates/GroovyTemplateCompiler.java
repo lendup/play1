@@ -7,9 +7,13 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.TreeMap;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import play.Play;
 import play.Logger;
@@ -44,14 +48,14 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         }
     }
 
-    final static Map<String,List<Pattern>> classToRegexMap;
     final static Map<String, String> originalNames = new HashMap<String, String>();
+    final static List<String> names;
+    final static Map<String, Map<String, String>> replacements;
+    final static Map<String, Pattern> patterns;
 
     static {
-        classToRegexMap = new HashMap<String,List<Pattern>>();
-
         // Static access
-        List<String> names = new ArrayList<String>();
+        names = new ArrayList<String>();
         for (Class clazz : Play.classloader.getAllClasses()) {
             if (clazz.getName().endsWith("$")) {
                 String name = clazz.getName().substring(0, clazz.getName().length() - 1).replace('$', '.') + '$';
@@ -70,12 +74,35 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
             }
         });
 
-        for (String cName : names) {
-            classToRegexMap.put(cName, new ArrayList<Pattern>());
-            classToRegexMap.get(cName).add(Pattern.compile("new " + Pattern.quote(cName) + "(\\([^)]*\\))"));
-            classToRegexMap.get(cName).add(Pattern.compile("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName)));
-            classToRegexMap.get(cName).add(Pattern.compile("([^.])" + Pattern.quote(cName) + ".class"));
-            classToRegexMap.get(cName).add(Pattern.compile("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])"));
+        replacements = new HashMap<String, Map<String, String>>();
+        patterns = new HashMap<String, Pattern>();
+
+        for (final String cName : names) {
+
+            Map<String, String> replacementsSub = new LinkedHashMap<String, String>() {{
+                put("new " + Pattern.quote(cName) + "(\\([^)]*\\))",
+                        "_('" + originalNames.get(cName).replace("$", "\\$") + "').newInstance$1");
+                put("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName),
+                        "_('" + originalNames.get(cName).replace("$", "\\$") + "').isAssignableFrom($1.class)");
+                put("([^.])" + Pattern.quote(cName) + ".class",
+                        "$1_('" + originalNames.get(cName).replace("$", "\\$") + "')");
+                put("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])",
+                        "$1_('" + originalNames.get(cName).replace("$", "\\$") + "')$2");
+            }};
+
+            Iterator<String> iter = replacementsSub.keySet().iterator();
+            StringBuilder sb = new StringBuilder();
+            if (iter.hasNext()) {
+                sb.append(iter.next());
+                while (iter.hasNext()) {
+                    sb.append("|").append(iter.next());
+                }
+            }
+
+            Logger.info("Pattern is %s", sb.toString());
+
+            replacements.put(cName, replacementsSub);
+            patterns.put(cName, Pattern.compile(sb.toString()));
         }
     }
 
@@ -92,35 +119,24 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         // but I failed to do so.. Such a single regexp would be much faster since
         // we then we only would have to have one pass.
 
-        if (!classToRegexMap.isEmpty()) {
-
-            if (classToRegexMap.size() <= 1 || source.indexOf("new ")>=0) {
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(0).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').newInstance$1");
-                }
-            }
-
-            if (classToRegexMap.size() <= 1 || source.indexOf("instanceof")>=0) {
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(1).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').isAssignableFrom($1.class)");
-
-                }
-            }
-
-            if (classToRegexMap.size() <= 1 || source.indexOf(".class")>=0) {
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(2).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')");
-
-                }
-            }
+        if (!names.isEmpty()) {
 
             // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
             // so we have to run all the replaceAll-calls
-            for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                source = e.getValue().get(3).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')$2");
+            for (final String cName : names) {
+
+                Matcher m = patterns.get(cName).matcher(source);
+
+                StringBuffer sb = new StringBuffer();
+
+                while (m.find()) {
+                    m.appendReplacement(sb, replacements.get(cName).get(m.group()));
+                }
+                m.appendTail(sb);
+
+                source = sb.toString();
             }
         }
-
 
         return source;
     }
