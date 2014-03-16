@@ -5,6 +5,10 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Callable;
+import java.util.concurrent.TimeUnit;
 
 import play.Logger;
 import play.Play;
@@ -35,7 +39,7 @@ public class TemplateLoader {
      * @param path
      * @return
      */
-    public static String getUniqueNumberForTemplateFile(String path) {
+    synchronized public static String getUniqueNumberForTemplateFile(String path) {
         //a path cannot be a valid classname so we have to convert it somehow.
         //If we did some encoding on the path, the result would be at least as long as the path.
         //Therefor we assign a unique number to each path the first time we see it, and store it..
@@ -201,8 +205,9 @@ public class TemplateLoader {
      */
     public static List<Template> getAllTemplate() {
         List<Template> res = new ArrayList<Template>();
+        ExecutorService executor = Executors.newFixedThreadPool(9);
         for (VirtualFile virtualFile : Play.templatesPath) {
-            scan(res, virtualFile);
+            scan(res, virtualFile, executor);
         }
         for (VirtualFile root : Play.roots) {
             VirtualFile vf = root.child("conf/routes");
@@ -213,28 +218,43 @@ public class TemplateLoader {
                 }
             }
         }
+        executor.shutdown();
+        try {
+            while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                Logger.trace("Waiting for template compiler threads to complete, sleeping 1s...");
+            }
+        } catch (Exception e) {}
         return res;
     }
 
-    private static void scan(List<Template> templates, VirtualFile current) {
+
+    private static void scan(final List<Template> templates, final VirtualFile current, ExecutorService executor) {
         if (!current.isDirectory() && !current.getName().startsWith(".") && !current.getName().endsWith(".scala.html")) {
-            long start = System.currentTimeMillis();
-            Template template = load(current);
-            if (template != null) {
-                try {
-                    template.compile();
-                    if (Logger.isTraceEnabled()) {
-                        Logger.trace("%sms to load %s", System.currentTimeMillis() - start, current.getName());
+            executor.submit(new Callable<Boolean>() {
+                public Boolean call() {
+                    Logger.trace(Thread.currentThread().getName()+" Start. ");
+
+                    long start = System.currentTimeMillis();
+                    Template template = load(current);
+                    if (template != null) {
+                        try {
+                            template.compile();
+                            if (Logger.isTraceEnabled()) {
+                                Logger.trace("%sms to load %s", System.currentTimeMillis() - start, current.getName());
+                            }
+                        } catch (TemplateCompilationException e) {
+                            Logger.error(e, "Template %s does not compile at line %d", e.getTemplate().name, e.getLineNumber());
+                            throw e;
+                        }
                     }
-                } catch (TemplateCompilationException e) {
-                    Logger.error("Template %s does not compile at line %d", e.getTemplate().name, e.getLineNumber());
-                    throw e;
+                    templates.add(template);
+                    Logger.trace(Thread.currentThread().getName()+" End. ");
+                    return true;
                 }
-                templates.add(template);
-            }
+            });
         } else if (current.isDirectory() && !current.getName().startsWith(".")) {
             for (VirtualFile virtualFile : current.list()) {
-                scan(templates, virtualFile);
+                scan(templates, virtualFile, executor);
             }
         }
     }

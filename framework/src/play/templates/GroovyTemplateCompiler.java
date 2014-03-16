@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
 import play.Play;
+import play.Logger;
 import play.exceptions.TemplateCompilationException;
 import play.templates.GroovyInlineTags.CALL;
 
@@ -19,15 +20,17 @@ import play.templates.GroovyInlineTags.CALL;
  */
 public class GroovyTemplateCompiler extends TemplateCompiler {
 
-    public static List<String> extensionsClassnames = new ArrayList<String>();
+    static public List<String> extensionsClassnames = new ArrayList<String>();
 
     // [#714] The groovy-compiler complaints if a line is more than 65535 unicode units long..
     // Have to split it if it is really that big
     protected static final int maxPlainTextLength = 60000;
 
-
-    @Override
-    public BaseTemplate compile(BaseTemplate template) {
+    // move the building of the extension class name into a static initializer
+    // in order to make it thread-safe (previously it was building every time
+    // compile() was called.
+    //
+    static {
         try {
             extensionsClassnames.clear();
             extensionsClassnames.addAll( Play.pluginCollection.addTemplateExtensions());
@@ -36,9 +39,8 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
                 extensionsClassnames.add(extensionsClass.getName());
             }
         } catch (Throwable e) {
-            //
+            Logger.error(e, "unable to load class extensions!: %s", e.getMessage());
         }
-        return super.compile(template);
     }
 
     @Override
@@ -68,6 +70,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
                 return o2.length() - o1.length();
             }
         });
+
 
         // We're about to do many many String.replaceAll() so we do some checking first
         // to try to reduce the number of needed replaceAll-calls.
