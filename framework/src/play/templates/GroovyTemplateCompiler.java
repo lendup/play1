@@ -93,31 +93,64 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         // we then we only would have to have one pass.
 
         if (!classToRegexMap.isEmpty()) {
+            // Keep track of a dirty bit to see whether any of the first three
+            // dynamic class binding rewrites were applied. If none of them
+            // were used, skip the class name rewriting.
+            //
+            // All class names in LendUp templates were manually rewritten from
+            //   com.foo.Foo
+            // to
+            //   _('com.foo.Foo')
+            // so that we could avoid this step. Note that an inner class would
+            // be rewritten to something like _('com.foo.Foo$Inner') instead.
+            //
+            // By skipping this step, we save (# of loaded classes) * (# of templates)
+            // regex search-replaces. At the time of writing, that amounts to
+            // about 3000 * 1200 ~ 3.6 million replaces.
+            //
+            // If the filename is of the form "{module:...}", let's assume that
+            // we don't control it and apply the class name rewrite defensively.
+            boolean dirty = template.name.startsWith("{module:");
 
             if (classToRegexMap.size() <= 1 || source.indexOf("new ")>=0) {
+                String origSource = source;
+
                 for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
                     source = e.getValue().get(0).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').newInstance$1");
                 }
+
+                dirty |= !origSource.equals(source);
             }
 
             if (classToRegexMap.size() <= 1 || source.indexOf("instanceof")>=0) {
+                String origSource = source;
+
                 for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
                     source = e.getValue().get(1).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').isAssignableFrom($1.class)");
-
                 }
+
+                dirty |= !origSource.equals(source);
             }
 
             if (classToRegexMap.size() <= 1 || source.indexOf(".class")>=0) {
+                String origSource = source;
+
                 for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
                     source = e.getValue().get(2).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')");
 
                 }
+
+                dirty |= !origSource.equals(source);
             }
 
-            // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
-            // so we have to run all the replaceAll-calls
-            for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                source = e.getValue().get(3).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')$2");
+            // We only want to remap class names if we encountered any of the previous
+            // patterns (new keyword, .class, instanceof)
+            if (dirty) {
+                // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
+                // so we have to run all the replaceAll-calls
+                for (Entry<String, List<Pattern>> e : classToRegexMap.entrySet()) {
+                    source = e.getValue().get(3).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')$2");
+                }
             }
         }
 
