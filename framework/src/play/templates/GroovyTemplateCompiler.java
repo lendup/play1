@@ -9,6 +9,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.regex.Pattern;
 import play.Play;
 import play.Logger;
@@ -43,16 +44,14 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         }
     }
 
-    @Override
-    String source() {
-        String source = template.source;
+    final static Map<String,List<Pattern>> classToRegexMap;
+    final static Map<String, String> originalNames = new HashMap<String, String>();
 
-        // If a plugin has something to change in the template before the compilation
-        source = Play.pluginCollection.overrideTemplateSource(template, source);
+    static {
+        classToRegexMap = new HashMap<String,List<Pattern>>();
 
         // Static access
         List<String> names = new ArrayList<String>();
-        Map<String, String> originalNames = new HashMap<String, String>();
         for (Class clazz : Play.classloader.getAllClasses()) {
             if (clazz.getName().endsWith("$")) {
                 String name = clazz.getName().substring(0, clazz.getName().length() - 1).replace('$', '.') + '$';
@@ -71,6 +70,21 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
             }
         });
 
+        for (String cName : names) {
+            classToRegexMap.put(cName, new ArrayList<Pattern>());
+            classToRegexMap.get(cName).add(Pattern.compile("new " + Pattern.quote(cName) + "(\\([^)]*\\))"));
+            classToRegexMap.get(cName).add(Pattern.compile("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName)));
+            classToRegexMap.get(cName).add(Pattern.compile("([^.])" + Pattern.quote(cName) + ".class"));
+            classToRegexMap.get(cName).add(Pattern.compile("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])"));
+        }
+    }
+
+    @Override
+    String source() {
+        String source = template.source;
+
+        // If a plugin has something to change in the template before the compilation
+        source = Play.pluginCollection.overrideTemplateSource(template, source);
 
         // We're about to do many many String.replaceAll() so we do some checking first
         // to try to reduce the number of needed replaceAll-calls.
@@ -78,35 +92,66 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         // but I failed to do so.. Such a single regexp would be much faster since
         // we then we only would have to have one pass.
 
-        if (!names.isEmpty()) {
+        if (!classToRegexMap.isEmpty()) {
+            // Keep track of a dirty bit to see whether any of the first three
+            // dynamic class binding rewrites were applied. If none of them
+            // were used, skip the class name rewriting.
+            //
+            // All class names in LendUp templates were manually rewritten from
+            //   com.foo.Foo
+            // to
+            //   _('com.foo.Foo')
+            // so that we could avoid this step. Note that an inner class would
+            // be rewritten to something like _('com.foo.Foo$Inner') instead.
+            //
+            // By skipping this step, we save (# of loaded classes) * (# of templates)
+            // regex search-replaces. At the time of writing, that amounts to
+            // about 3000 * 1200 ~ 3.6 million replaces.
+            //
+            // If the filename is of the form "{module:...}", let's assume that
+            // we don't control it and apply the class name rewrite defensively.
+            boolean dirty = template.name.startsWith("{module:");
 
-            if (names.size() <= 1 || source.indexOf("new ")>=0) {
-                for (String cName : names) { // dynamic class binding
-                    source = source.replaceAll("new " + Pattern.quote(cName) + "(\\([^)]*\\))", "_('" + originalNames.get(cName).replace("$", "\\$") + "').newInstance$1");
+            if (classToRegexMap.size() <= 1 || source.indexOf("new ")>=0) {
+                String origSource = source;
+
+                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
+                    source = e.getValue().get(0).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').newInstance$1");
+                }
+
+                dirty |= !origSource.equals(source);
+            }
+
+            if (classToRegexMap.size() <= 1 || source.indexOf("instanceof")>=0) {
+                String origSource = source;
+
+                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
+                    source = e.getValue().get(1).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').isAssignableFrom($1.class)");
+                }
+
+                dirty |= !origSource.equals(source);
+            }
+
+            if (classToRegexMap.size() <= 1 || source.indexOf(".class")>=0) {
+                String origSource = source;
+
+                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
+                    source = e.getValue().get(2).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')");
+
+                }
+
+                dirty |= !origSource.equals(source);
+            }
+
+            // We only want to remap class names if we encountered any of the previous
+            // patterns (new keyword, .class, instanceof)
+            if (dirty) {
+                // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
+                // so we have to run all the replaceAll-calls
+                for (Entry<String, List<Pattern>> e : classToRegexMap.entrySet()) {
+                    source = e.getValue().get(3).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')$2");
                 }
             }
-
-            if (names.size() <= 1 || source.indexOf("instanceof")>=0) {
-                for (String cName : names) { // dynamic class binding
-                    source = source.replaceAll("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName), "_('" + originalNames.get(cName).replace("$", "\\$") + "').isAssignableFrom($1.class)");
-
-                }
-            }
-
-            if (names.size() <= 1 || source.indexOf(".class")>=0) {
-                for (String cName : names) { // dynamic class binding
-                    source = source.replaceAll("([^.])" + Pattern.quote(cName) + ".class", "$1_('" + originalNames.get(cName).replace("$", "\\$") + "')");
-
-                }
-            }
-
-            // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
-            // so we have to run all the replaceAll-calls
-            for (String cName : names) { // dynamic class binding
-                source = source.replaceAll("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])", "$1_('" + originalNames.get(cName).replace("$", "\\$") + "')$2");
-
-            }
-
         }
 
 
