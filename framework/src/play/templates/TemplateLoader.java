@@ -222,7 +222,7 @@ public class TemplateLoader {
         }
         executor.shutdown();
         try {
-            while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+            while (!executor.awaitTermination(300, TimeUnit.MILLISECONDS)) {
                 Logger.trace("Waiting for template compiler threads to complete, sleeping 1s...");
             }
         } catch (Exception e) {}
