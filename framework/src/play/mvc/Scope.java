@@ -66,7 +66,7 @@ public class Scope {
                 return;
             }
             try {
-                String flashData = CookieDataCodec.encode(out);
+                String flashData = CookieDataCodec.encode(data);
                 Http.Response.current().setCookie(COOKIE_PREFIX + "_FLASH", flashData, null, "/", null, COOKIE_SECURE);
             } catch (Exception e) {
                 throw new UnexpectedException("Flash serializationProblem", e);
@@ -357,28 +357,23 @@ public class Scope {
         public void checkAndParse() {
             if (!requestIsParsed) {
                 Http.Request request = Http.Request.current();
-                if (request == null) {
-                    throw new UnexpectedException("Current request undefined");
-                } else {
-                    String contentType = request.contentType;
-                    if (contentType != null) {
-                        DataParser dataParser = DataParser.parsers
-                                .get(contentType);
-                        if (dataParser != null) {
-                            _mergeWith(dataParser.parse(request.body));
-                        } else {
-                            if (contentType.startsWith("text/")) {
-                                _mergeWith(new TextParser().parse(request.body));
-                            }
+                String contentType = request.contentType;
+                if (contentType != null) {
+                    DataParser dataParser = DataParser.parsers.get(contentType);
+                    if (dataParser != null) {
+                        _mergeWith(dataParser.parse(request.body));
+                    } else {
+                        if (contentType.startsWith("text/")) {
+                            _mergeWith(new TextParser().parse(request.body));
                         }
                     }
-                    try {
-                        request.body.close();
-                    } catch (Exception e) {
-                        //
-                    }
-                    requestIsParsed = true;
                 }
+                try {
+                    request.body.close();
+                } catch (Exception e) {
+                    //
+                }
+                requestIsParsed = true;
             }
         }
 

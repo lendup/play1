@@ -71,8 +71,8 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
         } catch (NoSuchAlgorithmException e) {
             throw new InternalError("SHA-1 not supported on this platform");
         }
-    } 
-    
+    }
+
     static {
         exposePlayServer = !"false".equals(Play.configuration.getProperty("http.exposePlayServer"));
     }
@@ -637,7 +637,12 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
         Map<String, Http.Cookie> cookies = new HashMap<String, Http.Cookie>(16);
         String value = nettyRequest.getHeader(COOKIE);
         if (value != null) {
-            Set<Cookie> cookieSet = new CookieDecoder().decode(value);
+            Set<Cookie> cookieSet = new HashSet<Cookie>();
+            try {
+                cookieSet = new CookieDecoder().decode(value);
+            } catch (Exception e) {
+                Logger.error("Unable to parse cookies due to malformed cookie %s: %s", value, e.getMessage());
+            }
             if (cookieSet != null) {
                 for (Cookie cookie : cookieSet) {
                     Http.Cookie playCookie = new Http.Cookie();
@@ -966,15 +971,15 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
         if (Play.mode == Play.Mode.DEV) {
             httpResponse.setHeader(CACHE_CONTROL, "no-cache");
         } else {
-			// Check if Cache-Control header is not set
-			if (httpResponse.getHeader(CACHE_CONTROL) == null) {
-            	String maxAge = Play.configuration.getProperty("http.cacheControl", "3600");
-            	if (maxAge.equals("0")) {
-               		httpResponse.setHeader(CACHE_CONTROL, "no-cache");
-            	} else {
-                	httpResponse.setHeader(CACHE_CONTROL, "max-age=" + maxAge);
-            	}
-			}
+            // Check if Cache-Control header is not set
+            if (httpResponse.getHeader(CACHE_CONTROL) == null) {
+                String maxAge = Play.configuration.getProperty("http.cacheControl", "3600");
+                if (maxAge.equals("0")) {
+                       httpResponse.setHeader(CACHE_CONTROL, "no-cache");
+                } else {
+                    httpResponse.setHeader(CACHE_CONTROL, "max-age=" + maxAge);
+                }
+            }
         }
         boolean useEtag = Play.configuration.getProperty("http.useETag", "true").equals("true");
         long last = file.lastModified();
@@ -1096,7 +1101,7 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
             inbound._received(new Http.WebSocketFrame(((TextWebSocketFrame)webSocketFrame).getText()));
         }
     }
-    
+
     private String getWebSocketLocation(HttpRequest req) {
         return "ws://" + req.getHeader(HttpHeaders.Names.HOST) + req.getUri();
     }
@@ -1108,7 +1113,7 @@ public class PlayHandler extends SimpleChannelUpstreamHandler {
 
         // Upgrade the pipeline as the handshaker needs the HttpStream Aggregator
         ctx.getPipeline().addLast("fake-aggregator", new HttpChunkAggregator(max));
-	try {
+    try {
         WebSocketServerHandshakerFactory wsFactory = new WebSocketServerHandshakerFactory(
                 this.getWebSocketLocation(req), null, false);
         this.handshaker = wsFactory.newHandshaker(req);

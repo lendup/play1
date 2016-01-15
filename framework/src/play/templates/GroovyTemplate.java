@@ -175,6 +175,7 @@ public class GroovyTemplate extends BaseTemplate {
                 }
 
             } catch (MultipleCompilationErrorsException e) {
+		Logger.error(e, "found mcee: %s", e.getMessage());
                 if (e.getErrorCollector().getLastError() != null) {
                     SyntaxErrorMessage errorMessage = (SyntaxErrorMessage) e.getErrorCollector().getLastError();
                     SyntaxException syntaxException = errorMessage.getCause();
