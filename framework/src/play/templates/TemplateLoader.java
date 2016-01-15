@@ -207,7 +207,7 @@ public class TemplateLoader {
         List<Template> res = new ArrayList<Template>();
         Logger.info("Starting parallel template compile...");
         int cores = Runtime.getRuntime().availableProcessors() + 1;
-        ExecutorService executor = Executors.newFixedThreadPool(9);
+        ExecutorService executor = Executors.newFixedThreadPool(cores);
         for (VirtualFile virtualFile : Play.templatesPath) {
             scan(res, virtualFile, executor);
         }
