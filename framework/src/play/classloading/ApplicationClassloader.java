@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.Class;
 import java.lang.annotation.Annotation;
 import java.lang.instrument.ClassDefinition;
 import java.net.MalformedURLException;
@@ -23,6 +24,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 import play.Logger;
 import play.Play;
@@ -390,8 +395,8 @@ public class ApplicationClassloader extends ClassLoader {
      * @return The list of well defined Class
      */
     public List<Class> getAllClasses() {
-        if (allClasses == null) {
-            allClasses = new ArrayList<Class>();
+        if (!allClassesInitialized) {
+            allClassesInitialized = true;
 
             if (Play.usePrecompiled) {
 
@@ -427,11 +432,35 @@ public class ApplicationClassloader extends ClassLoader {
 
                 }
 
-                for (ApplicationClass applicationClass : Play.classes.all()) {
-                    Class clazz = loadApplicationClass(applicationClass.name);
-                    if (clazz != null) {
-                        allClasses.add(clazz);
+                final int cores = Runtime.getRuntime().availableProcessors() + 1;
+                final ExecutorService executor = Executors.newFixedThreadPool(cores);
+
+                Logger.info("Using %d cores.", cores);
+
+                for (final ApplicationClass applicationClass : Play.classes.all()) {
+                    executor.submit(new Callable<Boolean>() {
+                        @Override
+                        public Boolean call() {
+                            final Class clazz = loadApplicationClass(applicationClass.name);
+
+                            if (clazz != null) {
+                                synchronized (allClasses) {
+                                    allClasses.add(clazz);
+                                }
+                            }
+
+                            return true;
+                        }
+                    });
+                }
+
+                executor.shutdown();
+                try {
+                    while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                        Logger.trace("Waiting for class enhancer threads to complete, sleeping 1s...");
                     }
+                } catch (Exception e) {
+                    Logger.error(e, "Class enhancer thread failed!");
                 }
 
                 Collections.sort(allClasses, new Comparator<Class>() {
@@ -444,7 +473,8 @@ public class ApplicationClassloader extends ClassLoader {
         }
         return allClasses;
     }
-    List<Class> allClasses = null;
+    boolean allClassesInitialized = false;
+    final List<Class> allClasses = new ArrayList<Class>();
 
     /**
      * Retrieve all application classes assignable to this class.
