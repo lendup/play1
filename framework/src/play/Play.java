@@ -345,7 +345,12 @@ public class Play {
      */
     public static void readConfiguration() {
         confs = new HashSet<VirtualFile>();
-        configuration = readOneConfigurationFile("application.conf");
+        try {
+            configuration = readOneConfigurationFile("application.conf");
+        } catch (RuntimeException e) {
+            Logger.fatal("Cannot read application.conf, exiting...");
+            fatalServerErrorOccurred();
+        }
         extractHttpPort();
         // Plugins
         pluginCollection.onConfigurationRead();
@@ -370,14 +375,7 @@ public class Play {
             throw new RuntimeException("Detected recursive @include usage. Have seen the file " + filename + " before");
         }
         
-        try {
-            propsFromFile = IO.readUtf8Properties(conf.inputstream());
-        } catch (RuntimeException e) {
-            if (e.getCause() instanceof IOException) {
-                Logger.fatal("Cannot read "+filename);
-                fatalServerErrorOccurred();
-            }
-        }
+        propsFromFile = IO.readUtf8Properties(conf.inputstream());
         confs.add(conf);
         
         // OK, check for instance specifics configuration
