@@ -1,10 +1,18 @@
 package play.classloading;
 
+import play.Logger;
+import play.Play;
+import play.cache.Cache;
+import play.classloading.ApplicationClasses.ApplicationClass;
+import play.classloading.hash.ClassStateHashCreator;
+import play.exceptions.UnexpectedException;
+import play.libs.IO;
+import play.vfs.VirtualFile;
+
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
-import java.lang.Class;
 import java.lang.annotation.Annotation;
 import java.lang.instrument.ClassDefinition;
 import java.net.MalformedURLException;
@@ -20,23 +28,14 @@ import java.util.Comparator;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Set;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-
-import play.Logger;
-import play.Play;
-import play.classloading.hash.ClassStateHashCreator;
-import play.vfs.VirtualFile;
-import play.cache.Cache;
-import play.classloading.ApplicationClasses.ApplicationClass;
-import play.exceptions.UnexpectedException;
-import play.libs.IO;
 
 /**
  * The application classLoader. 
@@ -432,35 +431,46 @@ public class ApplicationClassloader extends ClassLoader {
 
                 }
 
-                final int cores = Runtime.getRuntime().availableProcessors() + 1;
-                final ExecutorService executor = Executors.newFixedThreadPool(cores);
+                if (Boolean.parseBoolean(System.getenv("DISABLE_PARALLEL_CLASSLOADING"))) {
+                    for (ApplicationClass applicationClass : Play.classes.all()) {
+                        Class clazz = loadApplicationClass(applicationClass.name);
+                        if (clazz != null) {
+                            allClasses.add(clazz);
+                        }
+                    }
+                } else {
+                    final int cores = Runtime.getRuntime().availableProcessors() + 1;
+                    final ExecutorService executor = Executors.newFixedThreadPool(cores);
 
-                Logger.info("Using %d cores.", cores);
+                    Logger.info("Using %d cores.", cores);
 
-                for (final ApplicationClass applicationClass : Play.classes.all()) {
-                    executor.submit(new Callable<Boolean>() {
-                        @Override
-                        public Boolean call() {
-                            final Class clazz = loadApplicationClass(applicationClass.name);
+                    List<Future<Class>> futures = new LinkedList<Future<Class>>();
+
+                    for (final ApplicationClass applicationClass : Play.classes.all()) {
+                        futures.add(executor.submit(new Callable<Class>() {
+                            @Override
+                            public Class call() {
+                                return loadApplicationClass(applicationClass.name);
+                            }
+                        }));
+                    }
+
+                    executor.shutdown();
+                    try {
+                        while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
+                            Logger.trace("Waiting for class enhancer threads to complete, sleeping 1s...");
+                        }
+
+                        for (Future<Class> future:futures) {
+                            Class clazz = future.get();
 
                             if (clazz != null) {
-                                synchronized (allClasses) {
-                                    allClasses.add(clazz);
-                                }
+                                allClasses.add(clazz);
                             }
-
-                            return true;
                         }
-                    });
-                }
-
-                executor.shutdown();
-                try {
-                    while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                        Logger.trace("Waiting for class enhancer threads to complete, sleeping 1s...");
+                    } catch (Exception e) {
+                        Logger.error(e, "Class enhancer thread failed!");
                     }
-                } catch (Exception e) {
-                    Logger.error(e, "Class enhancer thread failed!");
                 }
 
                 Collections.sort(allClasses, new Comparator<Class>() {
