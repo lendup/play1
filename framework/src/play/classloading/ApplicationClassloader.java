@@ -439,7 +439,14 @@ public class ApplicationClassloader extends ClassLoader {
                         }
                     }
                 } else {
-                    final int cores = Runtime.getRuntime().availableProcessors() + 1;
+                    int cores = Runtime.getRuntime().availableProcessors() + 1;
+                    String envCores = System.getenv("PARALLEL_CLASSLOADING_THREADS");
+                    if (envCores != null) {
+                        try {
+                            cores = Integer.parseInt(envCores);
+                        } catch (NumberFormatException ignored) {
+                        }
+                    }
                     final ExecutorService executor = Executors.newFixedThreadPool(cores);
 
                     Logger.info("Using %d cores.", cores);
