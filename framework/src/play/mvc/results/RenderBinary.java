@@ -1,16 +1,18 @@
 package play.mvc.results;
 
-import java.io.File;
-import java.io.InputStream;
-import java.io.IOException;
-import java.nio.charset.Charset;
-import java.nio.charset.CharsetEncoder;
-
 import org.apache.commons.codec.net.URLCodec;
+import org.apache.commons.io.IOUtils;
 import play.exceptions.UnexpectedException;
 import play.libs.MimeTypes;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
+
+import java.io.File;
+import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetEncoder;
+
+import static org.apache.commons.io.IOUtils.closeQuietly;
 
 /**
  * 200 OK with application/octet-stream
@@ -31,7 +33,7 @@ public class RenderBinary extends Result {
     /**
      * send a binary stream as the response
      * @param is the stream to read from
-     * @param name the name to use as Content-Diposition attachement filename
+     * @param name the name to use as Content-Disposition attachment filename
      */
     public RenderBinary(InputStream is, String name) {
         this(is, name, false);
@@ -44,7 +46,7 @@ public class RenderBinary extends Result {
     /**
      * send a binary stream as the response
      * @param is the stream to read from
-     * @param name the name to use as Content-Diposition attachement filename
+     * @param name the name to use as Content-Disposition attachment filename
      * @param inline true to set the response Content-Disposition to inline
      */
     public RenderBinary(InputStream is, String name, boolean inline) {
@@ -54,7 +56,7 @@ public class RenderBinary extends Result {
     /**
      * send a binary stream as the response
      * @param is the stream to read from
-     * @param name the name to use as Content-Diposition attachement filename
+     * @param name the name to use as Content-Disposition attachment filename
      * @param inline true to set the response Content-Disposition to inline
      */
     public RenderBinary(InputStream is, String name, String contentType, boolean inline) {
@@ -138,7 +140,7 @@ public class RenderBinary extends Result {
                         String contentDisposition = "%s; filename=\"%s\"";
                         response.setHeader("Content-Disposition", String.format(contentDisposition, dispositionType, name));
                     } else {
-                        final String encoding = getEncoding();
+                        String encoding = getEncoding();
                         String contentDisposition = "%1$s; filename*="+encoding+"''%2$s; filename=\"%2$s\"";
                         response.setHeader("Content-Disposition", String.format(contentDisposition, dispositionType, encoder.encode(name, encoding)));
                     }
@@ -164,17 +166,10 @@ public class RenderBinary extends Result {
                         response.direct = is;
                     } else {
                         try {
-                            byte[] buffer = new byte[8192];
-                            int count = 0;
-                            while ((count = is.read(buffer)) > -1) {
-                                response.out.write(buffer, 0, count);
-                            }
+                            IOUtils.copyLarge(is, response.out);
                         }
                         finally {
-                            try {
-                                is.close();
-                            } catch (IOException e) {
-                            }
+                            closeQuietly(is);
                         }
                     }
                 }

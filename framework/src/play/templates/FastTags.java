@@ -2,15 +2,12 @@ package play.templates;
 
 import groovy.lang.Closure;
 
-import java.beans.PropertyDescriptor;
 import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.lang.annotation.ElementType;
 import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -18,6 +15,8 @@ import java.util.Map;
 
 import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.commons.lang.StringUtils;
+import org.codehaus.groovy.runtime.NullObject;
+
 import play.cache.Cache;
 import play.data.validation.Error;
 import play.data.validation.Validation;
@@ -26,6 +25,7 @@ import play.exceptions.TemplateExecutionException;
 import play.exceptions.TemplateNotFoundException;
 import play.libs.Codec;
 import play.mvc.Http;
+import play.mvc.Mailer;
 import play.mvc.Router.ActionDefinition;
 import play.mvc.Scope.Flash;
 import play.mvc.Scope.Session;
@@ -33,9 +33,6 @@ import play.templates.BaseTemplate.RawData;
 import play.templates.GroovyTemplate.ExecutableTemplate;
 import play.utils.HTML;
 
-/**
- * Fast tags implementation
- */
 public class FastTags {
 
     public static void _cache(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
@@ -61,67 +58,85 @@ public class FastTags {
     public static void _jsAction(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         String html = "";
         String minimize = "";
-        if(args.containsKey("minimize") && Boolean.FALSE.equals(Boolean.valueOf(args.get("minimize").toString()))){
+        if (args.containsKey("minimize") && Boolean.FALSE.equals(Boolean.valueOf(args.get("minimize").toString()))) {
             minimize = "\n";
         }
         html += "function(options) {" + minimize;
-        html += "var pattern = '" + args.get("arg").toString().replace("&amp;", "&") + "';" + minimize;;
-        html += "for(key in options) {" + minimize;;
+        html += "var pattern = '" + args.get("arg").toString().replace("&amp;", "&") + "';" + minimize;
+        html += "for(key in options) {" + minimize;
         html += "var val = options[key];" + minimize;
         // Encode URI script
-        if(args.containsKey("encodeURI") && Boolean.TRUE.equals(Boolean.valueOf(args.get("encodeURI").toString()))){ 
+        if (args.containsKey("encodeURI") && Boolean.TRUE.equals(Boolean.valueOf(args.get("encodeURI").toString()))) {
             html += "val = encodeURIComponent(val.replace('&amp;', '&'));" + minimize;
         }
-        //Custom script
-        if(args.containsKey("customScript")){
+        // Custom script
+        if (args.containsKey("customScript")) {
             html += "val = " + args.get("customScript") + minimize;
         }
-        html += "pattern = pattern.replace(':' + encodeURIComponent(key), val || '');"+ minimize;
-        html += "}" + minimize;;
-        html += "return pattern;" + minimize;;
+        html += "pattern = pattern.replace(':' + encodeURIComponent(key), ( (val===undefined || val===null)?'': val));" + minimize;
         html += "}" + minimize;
-	out.println(html);
+        html += "return pattern;" + minimize;
+        html += "}" + minimize;
+        out.println(html);
     }
 
     public static void _jsRoute(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
-        final Object arg = args.get("arg");
+        Object arg = args.get("arg");
         if (!(arg instanceof ActionDefinition)) {
-            throw new TemplateExecutionException(template.template, fromLine, "Wrong parameter type, try #{jsRoute @Application.index() /}", new TagInternalException("Wrong parameter type"));
+            throw new TemplateExecutionException(template.template, fromLine,
+                    "Wrong parameter type, try #{jsRoute @Application.index() /}", new TagInternalException("Wrong parameter type"));
         }
-        final ActionDefinition action = (ActionDefinition)arg;
+        ActionDefinition action = (ActionDefinition) arg;
         out.print("{");
         if (action.args.isEmpty()) {
             out.print("url: function() { return '" + action.url.replace("&amp;", "&") + "'; },");
         } else {
-            out.print("url: function(args) { var pattern = '" + action.url.replace("&amp;", "&") + "'; for (var key in args) { pattern = pattern.replace(':'+key, args[key] || ''); } return pattern; },");
+            out.print("url: function(args) { var pattern = '" + action.url.replace("&amp;", "&")
+                    + "'; for (var key in args) { pattern = pattern.replace(':'+key, args[key] || ''); } return pattern; },");
         }
         out.print("method: '" + action.method + "'");
         out.print("}");
     }
 
     public static void _authenticityToken(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
-        out.println("<input type=\"hidden\" name=\"authenticityToken\" value=\"" + Session.current().getAuthenticityToken() + "\">");
+        out.println("<input type=\"hidden\" name=\"authenticityToken\" value=\"" + Session.current().getAuthenticityToken() + "\"/>");
     }
 
     public static void _option(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         Object value = args.get("arg");
         Object selectedValue = TagContext.parent("select").data.get("selected");
         boolean selected = selectedValue != null && value != null && (selectedValue.toString()).equals(value.toString());
-        out.print("<option value=\"" + (value == null ? "" : value) + "\" " + (selected ? "selected=\"selected\"" : "") + " " + serialize(args, "selected", "value") + ">");
+        out.print("<option value=\"" + (value == null ? "" : value) + "\" " + (selected ? "selected=\"selected\"" : "") + " "
+                + serialize(args, "selected", "value") + ">");
         out.println(JavaExtensions.toString(body));
         out.print("</option>");
     }
 
     /**
      * Generates a html form element linked to a controller action
-     * @param args tag attributes
-     * @param body tag inner body
-     * @param out the output writer
-     * @param template enclosing template
-     * @param fromLine template line number where the tag is defined
+     * 
+     * @param args
+     *            tag attributes
+     * @param body
+     *            tag inner body
+     * @param out
+     *            the output writer
+     * @param template
+     *            enclosing template
+     * @param fromLine
+     *            template line number where the tag is defined
      */
     public static void _form(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
-        ActionDefinition actionDef = (ActionDefinition) args.get("arg");
+        ActionDefinition actionDef = null;
+        Object arg = args.get("arg");
+        if (arg instanceof ActionDefinition) {
+            actionDef = (ActionDefinition) arg;
+        }
+        else if (arg != null) {
+            actionDef = new ActionDefinition();
+            actionDef.url = arg.toString();
+            actionDef.method = "POST";
+        }
         if (actionDef == null) {
             actionDef = (ActionDefinition) args.get("action");
         }
@@ -135,56 +150,63 @@ public class FastTags {
         if (args.containsKey("method")) {
             actionDef.method = args.get("method").toString();
         }
-	    String name = null;
-	    if (args.containsKey("name")) {
+        String name = null;
+        if (args.containsKey("name")) {
             name = args.get("name").toString();
         }
-        String id = args.containsKey("id") ? " id=\"" + args.get("id") + "\"" : "";
-        String clz = args.containsKey("class") ? " class=\"" + args.get("class") + "\"" : "";
- 
         if (!("GET".equals(actionDef.method) || "POST".equals(actionDef.method))) {
             String separator = actionDef.url.indexOf('?') != -1 ? "&" : "?";
             actionDef.url += separator + "x-http-method-override=" + actionDef.method.toUpperCase();
             actionDef.method = "POST";
         }
         String encoding = Http.Response.current().encoding;
-        out.print("<form action=\"" + actionDef.url + "\" method=\"" + actionDef.method.toLowerCase() + "\" accept-charset=\""+encoding+"\" enctype=\"" + enctype + "\" " + serialize(args, "action", "method", "accept-charset", "enctype") + (name != null?"name=\"" + name + "\"":"") + id + clz + ">");
+        out.println("<form action=\"" + actionDef.url + "\" method=\"" + actionDef.method.toLowerCase() + "\" accept-charset=\"" + encoding
+                + "\" enctype=\"" + enctype + "\" " + serialize(args, "name", "action", "method", "accept-charset", "enctype")
+                + (name != null ? "name=\"" + name + "\"" : "") + ">");
         if (!("GET".equals(actionDef.method))) {
             _authenticityToken(args, body, out, template, fromLine);
         }
         out.println(JavaExtensions.toString(body));
         out.print("</form>");
     }
-    
+
     /**
-     * The field tag is a helper, based on the spirit of Don't Repeat Yourself. 
-     * @param args tag attributes
-     * @param body tag inner body
-     * @param out the output writer
-     * @param template enclosing template
-     * @param fromLine template line number where the tag is defined
+     * The field tag is a helper, based on the spirit of Don't Repeat Yourself.
+     * 
+     * @param args
+     *            tag attributes
+     * @param body
+     *            tag inner body
+     * @param out
+     *            the output writer
+     * @param template
+     *            enclosing template
+     * @param fromLine
+     *            template line number where the tag is defined
      */
     public static void _field(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
-        Map<String,Object> field = new HashMap<String,Object>();
+        Map<String, Object> field = new HashMap<>();
         String _arg = args.get("arg").toString();
         field.put("name", _arg);
-        field.put("id", _arg.replace('.','_'));
+        field.put("id", _arg.replace('.', '_'));
         field.put("flash", Flash.current().get(_arg));
-        field.put("flashArray", field.get("flash") != null && !StringUtils.isEmpty(field.get("flash").toString()) ? field.get("flash").toString().split(",") : new String[0]);
+        field.put("flashArray", field.get("flash") != null && !StringUtils.isEmpty(field.get("flash").toString()) ? field.get("flash")
+                .toString().split(",") : new String[0]);
         field.put("error", Validation.error(_arg));
         field.put("errorClass", field.get("error") != null ? "hasError" : "");
         String[] pieces = _arg.split("\\.");
         Object obj = body.getProperty(pieces[0]);
-        if(obj != null){
-            if(pieces.length > 1){
-                try{
-                	String path = _arg.substring(_arg.indexOf(".") + 1);
-                	Object value = PropertyUtils.getProperty(obj, path);
-              		field.put("value", value);
-                }catch(Exception e){
-                	// if there is a problem reading the field we dont set any value
+        if (obj != null) {
+            if (pieces.length > 1) {
+                try {
+                    String path = _arg.substring(_arg.indexOf(".") + 1);
+                    Object value = PropertyUtils.getProperty(obj, path);
+                    field.put("value", value);
+                } catch (Exception e) {
+                    // if there is a problem reading the field we dont set any
+                    // value
                 }
-            }else{
+            } else {
                 field.put("value", obj);
             }
         }
@@ -194,11 +216,17 @@ public class FastTags {
 
     /**
      * Generates a html link to a controller action
-     * @param args tag attributes
-     * @param body tag inner body
-     * @param out the output writer
-     * @param template enclosing template
-     * @param fromLine template line number where the tag is defined
+     * 
+     * @param args
+     *            tag attributes
+     * @param body
+     *            tag inner body
+     * @param out
+     *            the output writer
+     * @param template
+     *            enclosing template
+     * @param fromLine
+     *            template line number where the tag is defined
      */
     public static void _a(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         ActionDefinition actionDef = (ActionDefinition) args.get("arg");
@@ -212,7 +240,9 @@ public class FastTags {
                 actionDef.method = "POST";
             }
             String id = Codec.UUID();
-            out.print("<form method=\"POST\" id=\"" + id + "\" " +(args.containsKey("target") ? "target=\"" + args.get("target") + "\"" : "")+ " style=\"display:none\" action=\"" + actionDef.url + "\">");
+            out.print("<form method=\"POST\" id=\"" + id + "\" "
+                    + (args.containsKey("target") ? "target=\"" + args.get("target") + "\"" : "") + " style=\"display:none\" action=\""
+                    + actionDef.url + "\">");
             _authenticityToken(args, body, out, template, fromLine);
             out.print("</form>");
             out.print("<a href=\"javascript:document.getElementById('" + id + "').submit();\" " + serialize(args, "href") + ">");
@@ -236,7 +266,8 @@ public class FastTags {
 
     public static void _ifError(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         if (args.get("arg") == null) {
-            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException("Please specify the error key"));
+            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException(
+                    "Please specify the error key"));
         }
         if (Validation.hasError(args.get("arg").toString())) {
             body.call();
@@ -248,7 +279,8 @@ public class FastTags {
 
     public static void _errorClass(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         if (args.get("arg") == null) {
-            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException("Please specify the error key"));
+            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException(
+                    "Please specify the error key"));
         }
         if (Validation.hasError(args.get("arg").toString())) {
             out.print("hasError");
@@ -257,7 +289,8 @@ public class FastTags {
 
     public static void _error(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         if (args.get("arg") == null && args.get("key") == null) {
-            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException("Please specify the error key"));
+            throw new TemplateExecutionException(template.template, fromLine, "Please specify the error key", new TagInternalException(
+                    "Please specify the error key"));
         }
         String key = args.get("arg") == null ? args.get("key") + "" : args.get("arg") + "";
         Error error = Validation.error(key);
@@ -280,6 +313,8 @@ public class FastTags {
                 return ((Number) test).intValue() != 0;
             } else if (test instanceof Collection) {
                 return !((Collection) test).isEmpty();
+            } else if (test instanceof NullObject) {
+                return false;
             } else {
                 return true;
             }
@@ -304,7 +339,8 @@ public class FastTags {
     public static void _get(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         Object name = args.get("arg");
         if (name == null) {
-            throw new TemplateExecutionException(template.template, fromLine, "Specify a variable name", new TagInternalException("Specify a variable name"));
+            throw new TemplateExecutionException(template.template, fromLine, "Specify a variable name", new TagInternalException(
+                    "Specify a variable name"));
         }
         Object value = BaseTemplate.layoutData.get().get(name);
         if (value != null) {
@@ -321,7 +357,10 @@ public class FastTags {
         for (Map.Entry<?, ?> entry : args.entrySet()) {
             Object key = entry.getKey();
             if (!key.toString().equals("arg")) {
-                BaseTemplate.layoutData.get().put(key, (entry.getValue() != null && entry.getValue() instanceof String) ? __safe(template.template, entry.getValue()) : entry.getValue());
+                BaseTemplate.layoutData.get().put(
+                        key,
+                        (entry.getValue() != null && entry.getValue() instanceof String) ? __safe(template.template, entry.getValue())
+                                : entry.getValue());
                 return;
             }
         }
@@ -340,7 +379,8 @@ public class FastTags {
     public static void _extends(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         try {
             if (!args.containsKey("arg") || args.get("arg") == null) {
-                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException("Specify a template name"));
+                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException(
+                        "Specify a template name"));
             }
             String name = args.get("arg").toString();
             if (name.startsWith("./")) {
@@ -361,7 +401,8 @@ public class FastTags {
     public static void _include(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         try {
             if (!args.containsKey("arg") || args.get("arg") == null) {
-                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException("Specify a template name"));
+                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException(
+                        "Specify a template name"));
             }
             String name = args.get("arg").toString();
             if (name.startsWith("./")) {
@@ -373,7 +414,7 @@ public class FastTags {
                 name = ct + name.substring(1);
             }
             BaseTemplate t = (BaseTemplate) TemplateLoader.load(name);
-            Map<String, Object> newArgs = new HashMap<String, Object>();
+            Map<String, Object> newArgs = new HashMap<>();
             newArgs.putAll(template.getBinding().getVariables());
             newArgs.put("_isInclude", true);
             t.internalRender(newArgs);
@@ -386,7 +427,8 @@ public class FastTags {
     public static void _render(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
         try {
             if (!args.containsKey("arg") || args.get("arg") == null) {
-                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException("Specify a template name"));
+                throw new TemplateExecutionException(template.template, fromLine, "Specify a template name", new TagInternalException(
+                        "Specify a template name"));
             }
             String name = args.get("arg").toString();
             if (name.startsWith("./")) {
@@ -399,13 +441,26 @@ public class FastTags {
             }
             args.remove("arg");
             BaseTemplate t = (BaseTemplate) TemplateLoader.load(name);
-            Map<String, Object> newArgs = new HashMap<String, Object>();
+            Map<String, Object> newArgs = new HashMap<>();
             newArgs.putAll((Map<? extends String, ? extends Object>) args);
             newArgs.put("_isInclude", true);
             newArgs.put("out", out);
             t.internalRender(newArgs);
         } catch (TemplateNotFoundException e) {
             throw new TemplateNotFoundException(e.getPath(), template.template, fromLine);
+        }
+    }
+
+    public static void _embeddedImage(Map<?, ?> args, Closure body, PrintWriter out, ExecutableTemplate template, int fromLine) {
+        if ((args.containsKey("arg") && args.get("arg") != null) || (args.containsKey("src") && args.get("src") != null)) {
+            String src = (args.containsKey("arg") && args.get("arg") != null) ? args.get("arg").toString() : args.get("src").toString();
+            if (src != null) {
+                String name = (args.containsKey("name")) ? args.get("name").toString() : null;
+                out.print("<img src=\"" + Mailer.getEmbeddedSrc(src, name) + "\" " + serialize(args, "src", "name") + "/>");
+            }
+        } else {
+            throw new TemplateExecutionException(template.template, fromLine, "Specify a file name", new TagInternalException(
+                    "Specify a file name"));
         }
     }
 

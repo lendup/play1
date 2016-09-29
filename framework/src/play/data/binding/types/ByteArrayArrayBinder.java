@@ -16,17 +16,24 @@ import java.util.List;
 public class ByteArrayArrayBinder implements TypeBinder<byte[][]> {
 
     @SuppressWarnings("unchecked")
+    @Override
     public byte[][] bind(String name, Annotation[] annotations, String value, Class actualClass, Type genericType) {
         if (value == null || value.trim().length() == 0) {
             return null;
         }
-        List<Upload> uploads = (List<Upload>) Request.current().args.get("__UPLOADS");
-        List<byte[]> byteList = new ArrayList<byte[]>();
-        for (Upload upload : uploads) {
-            if (upload.getFieldName().equals(value)) {
-                byteList.add(upload.asBytes());
+        Request req = Request.current();
+        if (req != null && req.args != null) {
+            List<byte[]> byteList = new ArrayList<>();
+            List<Upload> uploads = (List<Upload>) req.args.get("__UPLOADS");
+            if(uploads != null){
+                for (Upload upload : uploads) {
+                    if (upload.getFieldName().equals(value)) {
+                        byteList.add(upload.asBytes());
+                    }
+                }
             }
+            return byteList.toArray(new byte[byteList.size()][]);
         }
-        return byteList.toArray(new byte[byteList.size()][]);
+        return null;
     }
 }

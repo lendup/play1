@@ -1,3 +1,4 @@
+out
 bin
 framework/classes
 framework/test-classes
@@ -30,7 +31,6 @@ eclipse
 .settings
 .classpath
 .project
-framework/tests/tmp
 id
 framework/tests-tmp
 framework/docs
@@ -49,8 +49,6 @@ modules/gwt/lib/play-gwt.jar
 tmp
 test-result
 logs
-logs
-tmp
 db
 *.pyc
 test-result
@@ -61,8 +59,11 @@ samples-and-tests/jobboard/test-result
 samples-and-tests/jobboard/attachments
 samples-and-tests/just-test-cases/tmp
 samples-and-tests/just-test-cases/test-result
+samples-and-tests/just-test-cases/lib
+samples-and-tests/just-test-cases/modules
 samples-and-tests/chat/tmp
 samples-and-tests/chat/logs
+samples-and-tests/java8Support/lib/
 .git
 modules/spring/lib/play-spring.jar
 modules/search/bin
@@ -142,5 +143,5 @@ samples-and-tests/zencontact/precompiled
 !modules/secure
 !modules/testrunner
 !framework/src/play/db
-.idea
+!framework/test-src/play/db
 *~

@@ -1,11 +1,12 @@
 package play.plugins;
 
+import java.util.Arrays;
+import java.util.Collection;
+
+import org.junit.Before;
 import org.junit.Test;
-import play.CorePlugin;
-import play.Play;
-import play.PlayBuilder;
-import play.PlayPlugin;
-import play.classloading.ApplicationClasses;
+
+import play.*;
 import play.data.parsing.TempFilePlugin;
 import play.data.validation.ValidationPlugin;
 import play.db.DBPlugin;
@@ -14,7 +15,7 @@ import play.db.jpa.JPAPlugin;
 import play.i18n.MessagesPlugin;
 import play.jobs.JobsPlugin;
 import play.libs.WS;
-
+import play.test.TestEngine;
 import static org.fest.assertions.Assertions.assertThat;
 
 /**
@@ -25,16 +26,21 @@ import static org.fest.assertions.Assertions.assertThat;
  * To change this template use File | Settings | File Templates.
  */
 public class PluginCollectionTest {
+    
+    @Before
+    public void init(){
+        new PlayBuilder().build();
+    }
 
     @Test
     public void verifyLoading() {
-        new PlayBuilder().build();
         PluginCollection pc = new PluginCollection();
         pc.loadPlugins();
 
         //the following plugin-list should match the list in the file 'play.plugins'
         assertThat(pc.getEnabledPlugins()).containsExactly(
                 pc.getPluginInstance(CorePlugin.class),
+                pc.getPluginInstance(ConfigurationChangeWatcherPlugin.class),
                 pc.getPluginInstance(TempFilePlugin.class),
                 pc.getPluginInstance(ValidationPlugin.class),
                 pc.getPluginInstance(DBPlugin.class),
@@ -48,9 +54,6 @@ public class PluginCollectionTest {
 
     @Test
     public void verifyLoadingFromFilesWithBlankLines() throws Exception {
-        //verify that only application specific plugins gets reloaded
-        new PlayBuilder().build();
-
         //create custom PluginCollection that fakes that TestPlugin is application plugin
         PluginCollection pc = new PluginCollection(){
             @Override
@@ -75,10 +78,6 @@ public class PluginCollectionTest {
 
     @Test
     public void verifyReloading() throws Exception{
-        //verify that only application specific plugins gets reloaded
-        new PlayBuilder().build();
-
-
         //create custom PluginCollection that fakes that TestPlugin is application plugin
         PluginCollection pc = new PluginCollection(){
             @Override
@@ -115,8 +114,6 @@ public class PluginCollectionTest {
     @SuppressWarnings({"deprecation"})
     @Test
     public void verifyUpdatePlayPluginsList(){
-        new PlayBuilder().build();
-
         assertThat(Play.plugins).isEmpty();
 
         PluginCollection pc = new PluginCollection();
@@ -147,6 +144,25 @@ public class PluginCollectionTest {
 
     }
 
+    @Test
+    public void verifyThatPluginsCanAddUnitTests() {
+        PluginCollection pc = new PluginCollection();
+        Play.pluginCollection = pc;
+
+        assertThat(TestEngine.allUnitTests()).isEmpty();
+        assertThat(TestEngine.allFunctionalTests()).isEmpty();
+
+        PluginWithTests p1 = new PluginWithTests();
+        PluginWithTests2 p2 = new PluginWithTests2();
+        pc.addPlugin(p1);
+        pc.addPlugin(p2);
+
+        pc.initializePlugin(p1);
+        pc.initializePlugin(p2);
+
+        assertThat(TestEngine.allUnitTests()).contains(PluginUnit.class, PluginUnit2.class);
+        assertThat(TestEngine.allFunctionalTests()).contains(PluginFunc.class, PluginFunc2.class);
+    }
 }
 
 
@@ -165,4 +181,36 @@ class LegacyPlugin extends PlayPlugin {
         }
         Play.plugins.remove( pluginToRemove);
     }
+
 }
+
+class PluginWithTests extends PlayPlugin {
+
+    @Override
+    public Collection<Class> getUnitTests() {
+        return Arrays.asList(new Class[]{PluginUnit.class});
+    }
+
+    @Override
+    public Collection<Class> getFunctionalTests() {
+        return Arrays.asList(new Class[]{PluginFunc.class});
+    }
+}
+
+class PluginWithTests2 extends PlayPlugin {
+
+    @Override
+    public Collection<Class> getUnitTests() {
+        return Arrays.asList(new Class[]{PluginUnit2.class});
+    }
+
+    @Override
+    public Collection<Class> getFunctionalTests() {
+        return Arrays.asList(new Class[]{PluginFunc2.class});
+    }
+}
+
+class PluginUnit {}
+class PluginUnit2 {}
+class PluginFunc {}
+class PluginFunc2 {}

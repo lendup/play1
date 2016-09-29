@@ -6,10 +6,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
+
 import net.sf.oval.configuration.annotation.AbstractAnnotationCheck;
 import play.Play;
 import play.classloading.enhancers.LocalvariablesNamesEnhancer.LocalVariablesNamesTracer;
@@ -17,8 +19,8 @@ import play.exceptions.UnexpectedException;
 
 public class Validation {
 
-    public static ThreadLocal<Validation> current = new ThreadLocal<Validation>();
-    List<Error> errors = new ArrayList<Error>();
+    public static final ThreadLocal<Validation> current = new ThreadLocal<>();
+    List<Error> errors = new ArrayList<>();
     boolean keep = false;
 
     protected Validation() {
@@ -56,7 +58,7 @@ public class Validation {
      * @return All errors keyed by field name
      */
     public Map<String, List<Error>> errorsMap() {
-        Map<String, List<Error>> result = new LinkedHashMap<String, List<Error>>();
+        Map<String, List<Error>> result = new LinkedHashMap<>();
         for (Error error : errors()) {
             result.put(error.key, errors(error.key));
         }
@@ -70,10 +72,59 @@ public class Validation {
      * @param variables Message variables
      */
     public static void addError(String field, String message, String... variables) {
-        if (error(field) == null || !error(field).message.equals(message)) {
-            Validation.current().errors.add(new Error(field, message, variables));
+        insertError(Validation.current().errors.size(), field, message,  variables);
+    }
+    
+    /**
+     * Insert an error at the specified position in this list.
+     * @param index index at which the specified element is to be inserted
+     * @param field Field name
+     * @param message Message key
+     * @param variables Message variables
+     */
+    public static void insertError(int index, String field, String message, String... variables) {
+        Error error = error(field);
+        if (error == null || !error.message.equals(message)) {
+            Validation.current().errors.add(index, new Error(field, message, variables));
         }
     }
+    
+    /**
+     * Remove all errors on a field with the given message
+     * @param field Field name
+     * @param message Message key
+     */
+     public static void removeErrors(String field, String message) {
+         Validation validation = current.get();
+         if (validation != null) {
+             Iterator<Error> it = validation.errors.iterator();
+             while (it.hasNext()) {
+                 Error error = it.next();
+                 if (error.key != null && error.key.equals(field) && error.message.equals(message)) {
+                     it.remove();
+                 }
+             }
+         }
+     }
+     
+    /**
+    * Remove all errors on a field
+    * @param field Field name
+    */
+    public static void removeErrors(String field) {
+        Validation validation = current.get();
+        if (validation != null) {
+            Iterator<Error> it = validation.errors.iterator();
+            while (it.hasNext()) {
+                Error error = it.next();
+                if (error.key != null && error.key.equals(field)) {
+                    it.remove();
+                }
+            }
+        }
+    }
+    
+    
 
     /**
      * @return True if the current request has errors
@@ -83,6 +134,14 @@ public class Validation {
         return validation != null && validation.errors.size() > 0;
     }
 
+    /**
+     * @param field The field name
+     * @return true if field has some errors
+     */
+    public static boolean hasErrors(String field){
+        return error(field) != null;
+    }
+    
     /**
      * @param field The field name
      * @return First error related to this field
@@ -109,7 +168,7 @@ public class Validation {
         if (validation == null)
             return Collections.emptyList();
       
-        List<Error> errors = new ArrayList<Error>();
+        List<Error> errors = new ArrayList<>();
         for (Error error : validation.errors) {
             if (error.key!=null && error.key.equals(field)) {
                 errors.add(error);
@@ -135,19 +194,21 @@ public class Validation {
 
     public static void clear() {
         current.get().errors.clear();
-        ValidationPlugin.keys.get().clear();
+        if(ValidationPlugin.keys.get() != null){
+            ValidationPlugin.keys.get().clear();
+        }
     }
 
     // ~~~~ Integration helper
     public static Map<String, List<Validator>> getValidators(Class<?> clazz, String name) {
-        Map<String, List<Validator>> result = new HashMap<String, List<Validator>>();
+        Map<String, List<Validator>> result = new HashMap<>();
         searchValidator(clazz, name, result);
         return result;
     }
 
     public static List<Validator> getValidators(Class<?> clazz, String property, String name) {
         try {
-            List<Validator> validators = new ArrayList<Validator>();
+            List<Validator> validators = new ArrayList<>();
             while (!clazz.equals(Object.class)) {
                 try {
                     Field field = clazz.getDeclaredField(property);
@@ -173,14 +234,14 @@ public class Validation {
             }
             return validators;
         } catch (Exception e) {
-            return new ArrayList<Validator>();
+            return new ArrayList<>();
         }
     }
 
     static void searchValidator(Class<?> clazz, String name, Map<String, List<Validator>> result) {
         for (Field field : clazz.getDeclaredFields()) {
 
-            List<Validator> validators = new ArrayList<Validator>();
+            List<Validator> validators = new ArrayList<>();
             String key = name + "." + field.getName();
             boolean containsAtValid = false;
             for (Annotation annotation : field.getDeclaredAnnotations()) {
@@ -214,7 +275,7 @@ public class Validation {
     public static class Validator {
 
         public Annotation annotation;
-        public Map<String, Object> params = new HashMap<String, Object>();
+        public Map<String, Object> params = new HashMap<>();
 
         public Validator(Annotation annotation) {
             this.annotation = annotation;
@@ -451,7 +512,13 @@ public class Validation {
         try {
             ValidationResult result = new ValidationResult();
             if (!check.isSatisfied(o, o, null, null)) {
-                Error error = new Error(key, check.getClass().getDeclaredField("mes").get(null) + "", check.getMessageVariables() == null ? new String[0] : check.getMessageVariables().values().toArray(new String[0]));
+                Error error = new Error(key, check.getClass()
+                        .getDeclaredField("mes").get(null)
+                        + "",
+                        check.getMessageVariables() == null ? new String[0]
+                                : check.getMessageVariables().values()
+                                        .toArray(new String[0]),
+                        check.getSeverity());
                 Validation.current().errors.add(error);
                 result.error = error;
                 result.ok = false;

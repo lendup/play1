@@ -1,16 +1,10 @@
 package play;
 
-import java.lang.annotation.Annotation;
 import com.google.gson.JsonObject;
-import java.lang.reflect.Method;
-import java.lang.reflect.Type;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.HashMap;
 import play.classloading.ApplicationClasses.ApplicationClass;
 import play.data.binding.RootParamNode;
 import play.db.Model;
+import play.libs.F;
 import play.mvc.Http.Request;
 import play.mvc.Http.Response;
 import play.mvc.Router.Route;
@@ -20,6 +14,14 @@ import play.templates.Template;
 import play.test.BaseTest;
 import play.test.TestEngine.TestResults;
 import play.vfs.VirtualFile;
+
+import java.lang.annotation.Annotation;
+import java.lang.reflect.Method;
+import java.lang.reflect.Type;
+import java.util.*;
+
+import static java.util.Collections.emptyList;
+import static java.util.Collections.emptyMap;
 
 /**
  * A framework plugin
@@ -200,22 +202,22 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
 
     /**
      * Called after an invocation.
-     * (unless an excetion has been thrown).
+     * (unless an exception has been thrown).
      * Time to close request specific things.
      */
     public void afterInvocation() {
     }
 
     /**
-     * Called if an exception occured during the invocation.
-     * @param e The catched exception.
+     * Called if an exception occurred during the invocation.
+     * @param e The caught exception.
      */
     public void onInvocationException(Throwable e) {
     }
 
     /**
      * Called at the end of the invocation.
-     * (even if an exception occured).
+     * (even if an exception occurred).
      * Time to close request specific things.
      */
     public void invocationFinally() {
@@ -252,6 +254,12 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
     }
 
     /**
+     * Called at the end of the action invocation (either in case of success or any failure).
+     */
+    public void onActionInvocationFinally() {
+    }
+
+    /**
      * Called when the application.conf has been read.
      */
     public void onConfigurationRead() {
@@ -272,11 +280,11 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
     }
 
     public List<ApplicationClass> onClassesChange(List<ApplicationClass> modified) {
-        return new ArrayList<ApplicationClass>();
+        return emptyList();
     }
 
     public List<String> addTemplateExtensions() {
-        return new ArrayList<String>();
+        return emptyList();
     }
 
     /**
@@ -285,7 +293,7 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
      * @return a Map from extensions (without dot) to mimetypes
      */
     public Map<String, String> addMimeTypes() {
-        return new HashMap<String, String>();
+        return emptyMap();
     }
 
     /**
@@ -320,23 +328,23 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
     public void onApplicationReady() {
     }
 
-    // ~~~~~
+    @Override
     public int compareTo(PlayPlugin o) {
         int res = index < o.index ? -1 : (index == o.index ? 0 : 1);
-        if (res!=0) {
+        if (res != 0) {
             return res;
         }
 
         // index is equal in both plugins.
-        // sort on classtype to get consistent order
+        // Sort on class type to get consistent order
         res = this.getClass().getName().compareTo(o.getClass().getName());
-        if (res != 0 ) {
+        if (res != 0) {
             // classnames where different
             return res;
         }
 
-        // identical classnames.
-        // sort on instance to get consistent order.
+        // Identical classnames.
+        // Sort on instance to get consistent order.
         // We only return 0 (equal) if both identityHashCode are identical
         // which is only the case if both this and other are the same object instance.
         // This is consistent with equals() when no special equals-method is implemented.
@@ -352,5 +360,124 @@ public abstract class PlayPlugin implements Comparable<PlayPlugin> {
     public Object willBeValidated(Object value) {
         return null;
     }
-    
+
+    /**
+     * Implement to add some classes that should be considered unit tests but do not extend
+     * {@link org.junit.Assert} to tests that can be executed by test runner (will be visible in test UI).
+     * <p>
+     * <strong>Note:</strong>You probably will also need to override {@link PlayPlugin#runTest(java.lang.Class)} method
+     * to handle unsupported tests execution properly.
+     * <p>
+     * Keep in mind that this method can only add tests to currently loaded ones.
+     * You cannot disable tests this way. You should also make sure you do not duplicate already loaded tests.
+     * 
+     * @return list of plugin supported unit test classes (empty list in default implementation)
+     */
+    public Collection<Class> getUnitTests() {
+        return emptyList();
+    }
+
+    /**
+     * Implement to add some classes that should be considered functional tests but do not extend
+     * {@link play.test.FunctionalTest} to tests that can be executed by test runner (will be visible in test UI).
+     * <p>
+     * <strong>Note:</strong>You probably will also need to override {@link PlayPlugin#runTest(java.lang.Class)} method
+     * to handle unsupported tests execution properly.
+     * <p>
+     * Keep in mind that this method can only add tests to currently loaded ones.
+     * You cannot disable tests this way. You should also make sure you do not duplicate already loaded tests.
+     *
+     * @return list of plugin supported functional test classes (empty list in default implementation)
+     */
+    public Collection<Class> getFunctionalTests() {
+        return emptyList();
+    }
+
+  /**
+     * Class that define a filter. A filter is a class that wrap a certain behavior around an action.
+     * You can access your Request and Response object within the filter. See the JPA plugin for an example.
+     * The JPA plugin wraps a transaction around an action. The filter applies a transaction to the current Action.
+     */
+    public static abstract class Filter<T>
+    {
+        String name;
+
+        public Filter(String name) {
+            this.name = name;
+        }
+        
+        public abstract T withinFilter(play.libs.F.Function0<T> fct) throws Throwable;
+
+        /**
+         * Surround innerFilter with this.  (innerFilter after this)
+         * @param innerFilter filter to be wrapped.
+         * @return a new Filter object.  newFilter.withinFilter(x) is outerFilter.withinFilter(innerFilter.withinFilter(x))
+         */
+        public Filter<T> decorate(final Filter<T> innerFilter) {
+          final Filter<T> outerFilter = this;
+          return new Filter<T>(this.name) {
+            @Override
+            public T withinFilter(F.Function0<T> fct) throws Throwable {
+              return compose(outerFilter.asFunction(), innerFilter.asFunction()).apply(fct);
+            }
+          };
+        }
+
+        /**
+         * Compose two second order functions whose input is a zero param function that returns type T...
+         * @param outer     Function that will wrap inner -- ("outer after inner")
+         * @param inner     Function to be wrapped by outer function -- ("outer after inner")
+         * @return          A function that computes outer(inner(x)) on application.
+         */
+        private static<T> Function1<F.Function0<T>, T> compose(final Function1<F.Function0<T>, T> outer, final Function1<F.Function0<T>, T> inner) {
+
+          return
+              new Function1<F.Function0<T>, T>() {
+                  @Override
+                  public T apply(final F.Function0<T> arg) throws Throwable {
+                      return outer.apply(new F.Function0<T>() {
+                          @Override
+                          public T apply() throws Throwable {
+                              return inner.apply(arg);
+                          }
+                      });
+                  }
+              };
+        }
+
+
+        private final Function1<play.libs.F.Function0<T>, T> _asFunction = new Function1<F.Function0<T>, T>() {
+          @Override
+          public T apply(F.Function0<T> arg) throws Throwable {
+            return withinFilter(arg);
+          }
+        };
+
+        public Function1<play.libs.F.Function0<T>, T> asFunction() {
+          return _asFunction;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        //I don't want to add any additional dependencies to the project or use JDK 8 features
+        //so I'm just rolling my own 1 arg function interface... there must be a better way to do this...
+        public static interface Function1<I, O> {
+          public O apply(I arg) throws Throwable;
+        }
+    }
+
+    public final boolean hasFilter() {
+        return this.getFilter() != null;
+    }
+
+    /**
+     * Return the filter implementation for this plugin. 
+     */ 
+    public Filter getFilter() {
+        return null;
+    }
+
+
 }

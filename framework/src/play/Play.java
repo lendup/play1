@@ -4,7 +4,6 @@ import java.io.File;
 import java.io.InputStreamReader;
 import java.io.BufferedReader;
 import java.io.LineNumberReader;
-import java.io.IOException;
 import java.net.URI;
 import java.net.URL;
 import java.util.*;
@@ -15,7 +14,9 @@ import java.util.regex.Pattern;
 import play.cache.Cache;
 import play.classloading.ApplicationClasses;
 import play.classloading.ApplicationClassloader;
+import play.deps.DependenciesManager;
 import play.exceptions.PlayException;
+import play.exceptions.RestartNeededException;
 import play.exceptions.UnexpectedException;
 import play.libs.IO;
 import play.mvc.Http;
@@ -100,7 +101,7 @@ public class Play {
     /**
      * All paths to search for files
      */
-    public static List<VirtualFile> roots = new ArrayList<VirtualFile>(16);
+    public static List<VirtualFile> roots = new ArrayList<>(16);
     /**
      * All paths to search for Java files
      */
@@ -120,7 +121,7 @@ public class Play {
     /**
      * The loaded configuration files
      */
-    public static Set<VirtualFile> confs = new HashSet<VirtualFile>(1);
+    public static Set<VirtualFile> confs = new HashSet<>(1);
     /**
      * The app configuration (already resolved from the framework id)
      */
@@ -132,7 +133,7 @@ public class Play {
     /**
      * The list of supported locales
      */
-    public static List<String> langs = new ArrayList<String>(16);
+    public static List<String> langs = new ArrayList<>(16);
     /**
      * The very secret key
      */
@@ -152,7 +153,7 @@ public class Play {
     /**
      * Modules
      */
-    public static Map<String, VirtualFile> modules = new HashMap<String, VirtualFile>(16);
+    public static Map<String, VirtualFile> modules = new HashMap<>(16);
     /**
      * Framework version
      */
@@ -235,19 +236,23 @@ public class Play {
                     tmpDir.mkdirs();
                 } catch (Throwable e) {
                     tmpDir = null;
-                    Logger.warn("No tmp folder will be used (cannot create the tmp dir)");
+                    Logger.warn("No tmp folder will be used (cannot create the tmp dir), caused by: %s", e);
                 }
             }
         }
 
         // Mode
-		try {
-        	mode = Mode.valueOf(configuration.getProperty("application.mode", "DEV").toUpperCase());
-		} catch (IllegalArgumentException e) {
-			Logger.error("Illegal mode '%s', use either prod or dev", configuration.getProperty("application.mode"));
-			fatalServerErrorOccurred();
-		}
-		if (usePrecompiled || forceProd) {
+        try {
+            mode = Mode.valueOf(configuration.getProperty("application.mode", "DEV").toUpperCase());
+        } catch (IllegalArgumentException e) {
+            Logger.error("Illegal mode '%s', use either prod or dev", configuration.getProperty("application.mode"));
+            fatalServerErrorOccurred();
+        }
+        
+        // Force the Production mode if forceProd or precompile is activate
+        // Set to the Prod mode must be done before loadModules call
+        // as some modules (e.g. DocViewer) is only available in DEV
+        if (usePrecompiled || forceProd || System.getProperty("precompile") != null) {
             mode = Mode.PROD;
         }
 
@@ -257,26 +262,26 @@ public class Play {
         // Build basic java source path
         VirtualFile appRoot = VirtualFile.open(applicationPath);
         roots.add(appRoot);
-        javaPath = new CopyOnWriteArrayList<VirtualFile>();
+        javaPath = new CopyOnWriteArrayList<>();
         javaPath.add(appRoot.child("app"));
         javaPath.add(appRoot.child("conf"));
 
         // Build basic templates path
-        if (appRoot.child("app/views").exists()) {
-            templatesPath = new ArrayList<VirtualFile>(2);
+        if (appRoot.child("app/views").exists() || (usePrecompiled && appRoot.child("precompiled/templates/app/views").exists())) {
+            templatesPath = new ArrayList<>(2);
             templatesPath.add(appRoot.child("app/views"));
         } else {
-            templatesPath = new ArrayList<VirtualFile>(1);
+            templatesPath = new ArrayList<>(1);
         }
 
         // Main route file
         routes = appRoot.child("conf/routes");
 
         // Plugin route files
-        modulesRoutes = new HashMap<String, VirtualFile>(16);
+        modulesRoutes = new HashMap<>(16);
 
         // Load modules
-        loadModules();
+        loadModules(appRoot);
 
         // Load the templates from the framework after the one from the modules
         templatesPath.add(VirtualFile.open(new File(frameworkPath, "framework/templates")));
@@ -299,8 +304,7 @@ public class Play {
         pluginCollection.loadPlugins();
 
         // Done !
-        if (mode == Mode.PROD || System.getProperty("precompile") != null) {
-            mode = Mode.PROD;
+        if (mode == Mode.PROD) {
             if (preCompile() && System.getProperty("precompile") == null) {
                 start();
             } else {
@@ -341,23 +345,18 @@ public class Play {
     }
 
     /**
-     * Read application.conf and resolve overriden key using the play id mechanism.
+     * Read application.conf and resolve overridden key using the play id mechanism.
      */
     public static void readConfiguration() {
-        confs = new HashSet<VirtualFile>();
-        try {
-            configuration = readOneConfigurationFile("application.conf");
-        } catch (RuntimeException e) {
-            Logger.fatal("Cannot read application.conf, exiting...");
-            fatalServerErrorOccurred();
-        }
+        confs = new HashSet<>();
+        configuration = readOneConfigurationFile("application.conf");
         extractHttpPort();
         // Plugins
         pluginCollection.onConfigurationRead();
      }
 
     private static void extractHttpPort() {
-        final String javaCommand = System.getProperty("sun.java.command", "");
+        String javaCommand = System.getProperty("sun.java.command", "");
         jregex.Matcher m = new jregex.Pattern(".* --http.port=({port}\\d+)").matcher(javaCommand);
         if (m.matches()) {
             configuration.setProperty("http.port", m.group("port"));
@@ -426,14 +425,14 @@ public class Play {
             propsFromFile.setProperty(key.toString(), newValue.toString());
         }
         // Include
-        Map<Object, Object> toInclude = new HashMap<Object, Object>(16);
+        Map<Object, Object> toInclude = new HashMap<>(16);
         for (Object key : propsFromFile.keySet()) {
             if (key.toString().startsWith("@include.")) {
                 try {
                     String filenameToInclude = propsFromFile.getProperty(key.toString());
                     toInclude.putAll( readOneConfigurationFile(filenameToInclude) );
                 } catch (Exception ex) {
-                    Logger.warn("Missing include: %s", key);
+                    Logger.warn(ex, "Missing include: %s", key);
                 }
             }
         }
@@ -460,6 +459,7 @@ public class Play {
                     //our plugins that we're going down when some calls ctrl+c or just kills our process..
                     shutdownHookEnabled = true;
                     Runtime.getRuntime().addShutdownHook(new Thread() {
+                        @Override
                         public void run() {
                             Play.stop();
                         }
@@ -489,9 +489,9 @@ public class Play {
             Logger.recordCaller = Boolean.parseBoolean(configuration.getProperty("application.log.recordCaller", "false"));
 
             // Locales
-            langs = new ArrayList<String>(Arrays.asList(configuration.getProperty("application.langs", "").split(",")));
+            langs = new ArrayList<>(Arrays.asList(configuration.getProperty("application.langs", "").split(",")));
             if (langs.size() == 1 && langs.get(0).trim().length() == 0) {
-                langs = new ArrayList<String>(16);
+                langs = new ArrayList<>(16);
             }
 
             // Clean templates
@@ -630,20 +630,24 @@ public class Play {
                 classloader.detectChanges();
             }
             Router.detectChanges(ctxPath);
-            for(VirtualFile conf : confs) {
-                if (conf.lastModified() > startedAt) {
-                    start();
-                    return;
-                }
-            }
             pluginCollection.detectChange();
             if (!Play.started) {
-                throw new RuntimeException("Not started");
+                throw new RestartNeededException("Not started");
             }
         } catch (PlayException e) {
             throw e;
+        } catch (RestartNeededException e) {
+            if (started) {
+                if (e.getCause() != null && e.getCause() != e) {
+                    Logger.info("Restart: " + e.getMessage() + ", caused by: " + e.getCause());
+                }
+                else {
+                    Logger.info("Restart: " + e.getMessage());
+                }
+            }
+            start();
         } catch (Exception e) {
-            // We have to do a clean refresh
+            Logger.error(e, "Restart: " + e.getMessage());
             start();
         }
     }
@@ -674,7 +678,7 @@ public class Play {
                     try {
                         Class.forName(line);
                     } catch (Exception e) {
-                        Logger.warn("! Cannot init static: " + line);
+                        Logger.warn(e, "! Cannot init static: " + line);
                     }
                 }
             } catch (Exception ex) {
@@ -684,10 +688,19 @@ public class Play {
     }
 
     /**
-     * Load all modules.
-     * You can even specify the list using the MODULES environement variable.
+     * Load all modules. You can even specify the list using the MODULES
+     * environment variable.
      */
     public static void loadModules() {
+        loadModules(VirtualFile.open(applicationPath));
+    }
+
+    /**
+     * Load all modules.
+     * You can even specify the list using the MODULES environment variable.
+     * @param appRoot : the application path virtual file
+     */
+    public static void loadModules(VirtualFile appRoot) {
         if (System.getenv("MODULES") != null) {
             // Modules path is prepended with a env property
             if (System.getenv("MODULES") != null && System.getenv("MODULES").trim().length() > 0) {
@@ -696,81 +709,102 @@ public class Play {
                     if (!modulePath.exists() || !modulePath.isDirectory()) {
                         Logger.error("Module %s will not be loaded because %s does not exist", modulePath.getName(), modulePath.getAbsolutePath());
                     } else {
-                        final String modulePathName = modulePath.getName();
-                        final String moduleName = modulePathName.contains("-") ?
+                        String modulePathName = modulePath.getName();
+                        String moduleName = modulePathName.contains("-") ?
                                 modulePathName.substring(0, modulePathName.lastIndexOf("-")) :
                                 modulePathName;
-                        addModule(moduleName, modulePath);
+                        addModule(appRoot, moduleName, modulePath);
                     }
                 }
             }
         }
-        for (Object key : configuration.keySet()) {
-            String pName = key.toString();
-            if (pName.startsWith("module.")) {
-                Logger.warn("Declaring modules in application.conf is deprecated. Use dependencies.yml instead (%s)", pName);
-                String moduleName = pName.substring(7);
-                File modulePath = new File(configuration.getProperty(pName));
-                if (!modulePath.isAbsolute()) {
-                    modulePath = new File(applicationPath, configuration.getProperty(pName));
-                }
-                if (!modulePath.exists() || !modulePath.isDirectory()) {
-                    Logger.error("Module %s will not be loaded because %s does not exist", moduleName, modulePath.getAbsolutePath());
-                } else {
-                    addModule(moduleName, modulePath);
-                }
-            }
-        }
 
-        // Load modules from modules/ directory
-        File localModules = Play.getFile("modules");
-        if (localModules.exists() && localModules.isDirectory()) {
-            for (File module : localModules.listFiles()) {
-                String moduleName = module.getName();
-		if (moduleName.startsWith(".")) {
-			Logger.info("Module %s is ignored, name starts with a dot", moduleName);
-			continue;
+        // Load modules from modules/ directory, but get the order from the dependencies.yml file
+		// .listFiles() returns items in an OS dependant sequence, which is bad
+		// See #781
+		// the yaml parser wants play.version as an environment variable
+		System.setProperty("play.version", Play.version);
+		System.setProperty("application.path", applicationPath.getAbsolutePath());
+
+		File localModules = Play.getFile("modules");
+		Set<String> modules = new LinkedHashSet<>();
+		if (localModules != null && localModules.exists() && localModules.isDirectory()) {
+			try {
+			    File userHome  = new File(System.getProperty("user.home"));
+			    DependenciesManager dm = new DependenciesManager(applicationPath, frameworkPath, userHome);
+				modules = dm.retrieveModules();
+			} catch (Exception e) {
+				Logger.error("There was a problem parsing dependencies.yml (module will not be loaded in order of the dependencies.yml)", e);
+				// Load module without considering the dependencies.yml order
+				modules.addAll(Arrays.asList(localModules.list()));		
+			}
+
+			for (Iterator<String> iter = modules.iterator(); iter.hasNext();) {
+				String moduleName = (String) iter.next();
+
+				File module = new File(localModules, moduleName);
+
+				if (moduleName.contains("-")) {
+					moduleName = moduleName.substring(0, moduleName.indexOf("-"));
+				}
+				
+				if(module == null || !module.exists()){
+				        Logger.error("Module %s will not be loaded because %s does not exist", moduleName, module.getAbsolutePath());
+				} else if (module.isDirectory()) {
+					addModule(appRoot, moduleName, module);
+				} else {
+					File modulePath = new File(IO.readContentAsString(module).trim());
+					if (!modulePath.exists() || !modulePath.isDirectory()) {
+						Logger.error("Module %s will not be loaded because %s does not exist", moduleName, modulePath.getAbsolutePath());
+					} else {
+						addModule(appRoot, moduleName, modulePath);
+					}
+				}
+			}
 		}
-                if (moduleName.contains("-")) {
-                    moduleName = moduleName.substring(0, moduleName.indexOf("-"));
-                }
-                if (module.isDirectory()) {
-                    addModule(moduleName, module);
-                } else {
-                    File modulePath = new File(IO.readContentAsString(module).trim());
-                    if (!modulePath.exists() || !modulePath.isDirectory()) {
-                        Logger.error("Module %s will not be loaded because %s does not exist", moduleName, modulePath.getAbsolutePath());
-                    } else {
-                        addModule(moduleName, modulePath);
-                    }
 
-                }
-            }
-        }
         // Auto add special modules
         if (Play.runingInTestMode()) {
-            addModule("_testrunner", new File(Play.frameworkPath, "modules/testrunner"));
+            addModule(appRoot, "_testrunner", new File(Play.frameworkPath, "modules/testrunner"));
         }
+
         if (Play.mode == Mode.DEV) {
-            addModule("_docviewer", new File(Play.frameworkPath, "modules/docviewer"));
+            addModule(appRoot, "_docviewer", new File(Play.frameworkPath, "modules/docviewer"));
         }
     }
 
     /**
      * Add a play application (as plugin)
      *
-     * @param path The application path
+     * @param name
+     *            : the module name
+     * @param path
+     *            The application path
      */
     public static void addModule(String name, File path) {
+        addModule(VirtualFile.open(applicationPath), name, path);
+    }
+    
+    /**
+     * Add a play application (as plugin)
+     *
+     * @param appRoot
+     *            : the application path virtual file
+     * @param name
+     *            : the module name
+     * @param path
+     *            The application path
+     */
+    public static void addModule(VirtualFile appRoot, String name, File path) {
         VirtualFile root = VirtualFile.open(path);
         modules.put(name, root);
         if (root.child("app").exists()) {
             javaPath.add(root.child("app"));
         }
-        if (root.child("app/views").exists()) {
+        if (root.child("app/views").exists() || (usePrecompiled && appRoot.child("precompiled/templates/from_module_" + name + "/app/views").exists())) {
             templatesPath.add(root.child("app/views"));
         }
-        if (root.child("conf/routes").exists()) {
+        if (root.child("conf/routes").exists() || (usePrecompiled && appRoot.child("precompiled/templates/from_module_" + name + "/conf/routes").exists())) {
             modulesRoutes.put(name, root.child("conf/routes"));
         }
         roots.add(root);
@@ -827,5 +861,8 @@ public class Play {
         }
     }
 
+    public static boolean useDefaultMockMailSystem() {
+        return configuration.getProperty("mail.smtp", "").equals("mock") && mode == Mode.DEV;
+    }
 
 }

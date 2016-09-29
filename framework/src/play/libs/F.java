@@ -13,27 +13,40 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
+import org.jboss.netty.channel.ChannelHandlerContext;
 
-import play.exceptions.UnexpectedException;
+import play.Logger;
 
 public class F {
 
+
+    /**
+     * A Function with no arguments.
+     */
+    public static interface Function0<R> {
+        public R apply() throws Throwable;
+    }
+
     public static class Promise<V> implements Future<V>, F.Action<V> {
 
-        final CountDownLatch taskLock = new CountDownLatch(1);
-        boolean cancelled = false;
+        protected final CountDownLatch taskLock = new CountDownLatch(1);
+        protected boolean cancelled = false;
 
+        @Override
         public boolean cancel(boolean mayInterruptIfRunning) {
             return false;
         }
 
+        @Override
         public boolean isCancelled() {
             return false;
         }
 
+        @Override
         public boolean isDone() {
             return invoked;
         }
@@ -42,6 +55,7 @@ public class F {
             return result;
         }
 
+        @Override
         public V get() throws InterruptedException, ExecutionException {
             taskLock.await();
             if (exception != null) {
@@ -51,19 +65,24 @@ public class F {
             return result;
         }
 
+        @Override
         public V get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
-            taskLock.await(timeout, unit);
+            if(!taskLock.await(timeout, unit)) {
+              throw new TimeoutException(String.format("Promise didn't redeem in %s %s", timeout, unit));
+            }
+            
             if (exception != null) {
                 // The result of the promise is an exception - throw it
                 throw new ExecutionException(exception);
             }
             return result;
         }
-        List<F.Action<Promise<V>>> callbacks = new ArrayList<F.Action<Promise<V>>>();
-        boolean invoked = false;
-        V result = null;
-        Throwable exception = null;
+        protected List<F.Action<Promise<V>>> callbacks = new ArrayList<>();
+        protected boolean invoked = false;
+        protected V result = null;
+        protected Throwable exception = null;
 
+        @Override
         public void invoke(V result) {
             invokeWithResultOrException(result, null);
         }
@@ -99,7 +118,7 @@ public class F {
             }
         }
 
-        public static <T> Promise<List<T>> waitAll(final Promise<T>... promises) {
+        public static <T> Promise<List<T>> waitAll(Promise<T>... promises) {
             return waitAll(Arrays.asList(promises));
         }
 
@@ -137,7 +156,7 @@ public class F {
                 @Override
                 public List<T> get() throws InterruptedException, ExecutionException {
                     waitAllLock.await();
-                    List<T> r = new ArrayList<T>();
+                    List<T> r = new ArrayList<>();
                     for (Promise<T> f : promises) {
                         r.add(f.get());
                     }
@@ -146,12 +165,16 @@ public class F {
 
                 @Override
                 public List<T> get(long timeout, TimeUnit unit) throws InterruptedException, ExecutionException, TimeoutException {
-                    waitAllLock.await(timeout, unit);
+                    if(!waitAllLock.await(timeout, unit)) {
+                      throw new TimeoutException(String.format("Promises didn't redeem in %s %s", timeout, unit));
+                    }
+                    
                     return get();
                 }
             };
-            final F.Action<Promise<T>> action = new F.Action<Promise<T>>() {
+            F.Action<Promise<T>> action = new F.Action<Promise<T>>() {
 
+                @Override
                 public void invoke(Promise<T> completed) {
                     waitAllLock.countDown();
                     if (waitAllLock.getCount() == 0) {
@@ -173,10 +196,11 @@ public class F {
         }
 
         public static <A, B> Promise<F.Tuple<A, B>> wait2(Promise<A> tA, Promise<B> tB) {
-            final Promise<F.Tuple<A, B>> result = new Promise<F.Tuple<A, B>>();
-            final Promise<List<Object>> t = waitAll(new Promise[]{tA, tB});
+            final Promise<F.Tuple<A, B>> result = new Promise<>();
+            Promise<List<Object>> t = waitAll(new Promise[]{tA, tB});
             t.onRedeem(new F.Action<Promise<List<Object>>>() {
 
+                @Override
                 public void invoke(Promise<List<Object>> completed) {
                     List<Object> values = completed.getOrNull();
                     if(values != null) {
@@ -191,10 +215,11 @@ public class F {
         }
 
         public static <A, B, C> Promise<F.T3<A, B, C>> wait3(Promise<A> tA, Promise<B> tB, Promise<C> tC) {
-            final Promise<F.T3<A, B, C>> result = new Promise<F.T3<A, B, C>>();
-            final Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC});
+            final Promise<F.T3<A, B, C>> result = new Promise<>();
+            Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC});
             t.onRedeem(new F.Action<Promise<List<Object>>>() {
 
+                @Override
                 public void invoke(Promise<List<Object>> completed) {
                     List<Object> values = completed.getOrNull();
                     if(values != null) {
@@ -209,10 +234,11 @@ public class F {
         }
 
         public static <A, B, C, D> Promise<F.T4<A, B, C, D>> wait4(Promise<A> tA, Promise<B> tB, Promise<C> tC, Promise<D> tD) {
-            final Promise<F.T4<A, B, C, D>> result = new Promise<F.T4<A, B, C, D>>();
-            final Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC, tD});
+            final Promise<F.T4<A, B, C, D>> result = new Promise<>();
+            Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC, tD});
             t.onRedeem(new F.Action<Promise<List<Object>>>() {
 
+                @Override
                 public void invoke(Promise<List<Object>> completed) {
                     List<Object> values = completed.getOrNull();
                     if(values != null) {
@@ -227,10 +253,11 @@ public class F {
         }
 
         public static <A, B, C, D, E> Promise<F.T5<A, B, C, D, E>> wait5(Promise<A> tA, Promise<B> tB, Promise<C> tC, Promise<D> tD, Promise<E> tE) {
-            final Promise<F.T5<A, B, C, D, E>> result = new Promise<F.T5<A, B, C, D, E>>();
-            final Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC, tD, tE});
+            final Promise<F.T5<A, B, C, D, E>> result = new Promise<>();
+            Promise<List<Object>> t = waitAll(new Promise[]{tA, tB, tC, tD, tE});
             t.onRedeem(new F.Action<Promise<List<Object>>>() {
 
+                @Override
                 public void invoke(Promise<List<Object>> completed) {
                     List<Object> values = completed.getOrNull();
                     if(values != null) {
@@ -244,12 +271,13 @@ public class F {
             return result;
         }
 
-        private static Promise<F.Tuple<Integer, Promise<Object>>> waitEitherInternal(final Promise<?>... futures) {
-            final Promise<F.Tuple<Integer, Promise<Object>>> result = new Promise<F.Tuple<Integer, Promise<Object>>>();
+        private static Promise<F.Tuple<Integer, Promise<Object>>> waitEitherInternal(Promise<?>... futures) {
+            final Promise<F.Tuple<Integer, Promise<Object>>> result = new Promise<>();
             for (int i = 0; i < futures.length; i++) {
                 final int index = i + 1;
                 ((Promise<Object>) futures[i]).onRedeem(new F.Action<Promise<Object>>() {
 
+                    @Override
                     public void invoke(Promise<Object> completed) {
                         result.invoke(new F.Tuple(index, completed));
                     }
@@ -258,12 +286,13 @@ public class F {
             return result;
         }
 
-        public static <A, B> Promise<F.Either<A, B>> waitEither(final Promise<A> tA, final Promise<B> tB) {
-            final Promise<F.Either<A, B>> result = new Promise<F.Either<A, B>>();
-            final Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB);
+        public static <A, B> Promise<F.Either<A, B>> waitEither(Promise<A> tA, Promise<B> tB) {
+            final Promise<F.Either<A, B>> result = new Promise<>();
+            Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB);
 
             t.onRedeem(new F.Action<Promise<F.Tuple<Integer, Promise<Object>>>>() {
 
+                @Override
                 public void invoke(Promise<F.Tuple<Integer, Promise<Object>>> completed) {
                     F.Tuple<Integer, Promise<Object>> value = completed.getOrNull();
                     switch (value._1) {
@@ -281,12 +310,13 @@ public class F {
             return result;
         }
 
-        public static <A, B, C> Promise<F.E3<A, B, C>> waitEither(final Promise<A> tA, final Promise<B> tB, final Promise<C> tC) {
-            final Promise<F.E3<A, B, C>> result = new Promise<F.E3<A, B, C>>();
-            final Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC);
+        public static <A, B, C> Promise<F.E3<A, B, C>> waitEither(Promise<A> tA, Promise<B> tB, Promise<C> tC) {
+            final Promise<F.E3<A, B, C>> result = new Promise<>();
+            Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC);
 
             t.onRedeem(new F.Action<Promise<F.Tuple<Integer, Promise<Object>>>>() {
 
+                @Override
                 public void invoke(Promise<F.Tuple<Integer, Promise<Object>>> completed) {
                     F.Tuple<Integer, Promise<Object>> value = completed.getOrNull();
                     switch (value._1) {
@@ -307,12 +337,13 @@ public class F {
             return result;
         }
 
-        public static <A, B, C, D> Promise<F.E4<A, B, C, D>> waitEither(final Promise<A> tA, final Promise<B> tB, final Promise<C> tC, final Promise<D> tD) {
-            final Promise<F.E4<A, B, C, D>> result = new Promise<F.E4<A, B, C, D>>();
-            final Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC, tD);
+        public static <A, B, C, D> Promise<F.E4<A, B, C, D>> waitEither(Promise<A> tA, Promise<B> tB, Promise<C> tC, Promise<D> tD) {
+            final Promise<F.E4<A, B, C, D>> result = new Promise<>();
+            Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC, tD);
 
             t.onRedeem(new F.Action<Promise<F.Tuple<Integer, Promise<Object>>>>() {
 
+                @Override
                 public void invoke(Promise<F.Tuple<Integer, Promise<Object>>> completed) {
                     F.Tuple<Integer, Promise<Object>> value = completed.getOrNull();
                     switch (value._1) {
@@ -336,12 +367,13 @@ public class F {
             return result;
         }
 
-        public static <A, B, C, D, E> Promise<F.E5<A, B, C, D, E>> waitEither(final Promise<A> tA, final Promise<B> tB, final Promise<C> tC, final Promise<D> tD, final Promise<E> tE) {
-            final Promise<F.E5<A, B, C, D, E>> result = new Promise<F.E5<A, B, C, D, E>>();
-            final Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC, tD, tE);
+        public static <A, B, C, D, E> Promise<F.E5<A, B, C, D, E>> waitEither(Promise<A> tA, Promise<B> tB, Promise<C> tC, Promise<D> tD, Promise<E> tE) {
+            final Promise<F.E5<A, B, C, D, E>> result = new Promise<>();
+            Promise<F.Tuple<Integer, Promise<Object>>> t = waitEitherInternal(tA, tB, tC, tD, tE);
 
             t.onRedeem(new F.Action<Promise<F.Tuple<Integer, Promise<Object>>>>() {
 
+                @Override
                 public void invoke(Promise<F.Tuple<Integer, Promise<Object>>> completed) {
                     F.Tuple<Integer, Promise<Object>> value = completed.getOrNull();
                     switch (value._1) {
@@ -369,11 +401,12 @@ public class F {
             return result;
         }
 
-        public static <T> Promise<T> waitAny(final Promise<T>... futures) {
-            final Promise<T> result = new Promise<T>();
+        public static <T> Promise<T> waitAny(Promise<T>... futures) {
+            final Promise<T> result = new Promise<>();
 
-            final F.Action<Promise<T>> action = new F.Action<Promise<T>>() {
+            F.Action<Promise<T>> action = new F.Action<Promise<T>>() {
 
+                @Override
                 public void invoke(Promise<T> completed) {
                     synchronized (this) {
                         if (result.isDone()) {
@@ -455,7 +488,7 @@ public class F {
     public static class EventStream<T> {
 
         final int bufferSize;
-        final ConcurrentLinkedQueue<T> events = new ConcurrentLinkedQueue<T>();
+        final ConcurrentLinkedQueue<T> events = new ConcurrentLinkedQueue<>();
         final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
 
         public EventStream() {
@@ -477,6 +510,7 @@ public class F {
 
         public synchronized void publish(T event) {
             if (events.size() > bufferSize) {
+            	Logger.warn("Dropping message.  If this is catastrophic to your app, use a BlockingEvenStream instead");
                 events.poll();
             }
             events.offer(event);
@@ -522,6 +556,99 @@ public class F {
         }
     }
 
+    public static class BlockingEventStream<T> {
+
+        final LinkedBlockingQueue<T> events;
+        final List<Promise<T>> waiting = Collections.synchronizedList(new ArrayList<Promise<T>>());
+        final ChannelHandlerContext ctx;
+        
+
+        public BlockingEventStream(ChannelHandlerContext ctx) {
+        	this(100, ctx);
+        }
+
+        public BlockingEventStream(int maxBufferSize, ChannelHandlerContext ctx) {
+        	this.ctx = ctx;
+        	events = new LinkedBlockingQueue<>(maxBufferSize + 10);
+        }
+
+        public synchronized Promise<T> nextEvent() {
+            if (events.isEmpty()) {
+                LazyTask task = new LazyTask(ctx);
+                waiting.add(task);
+                return task;
+            }
+            return new LazyTask(events.peek(), ctx);
+        }
+
+        //NOTE: cannot synchronize since events.put may block when system is overloaded.
+        //Normally, I HATE blocking an NIO thread, but to do this correct, we need a token from netty that we can use to disable
+        //the socket reads completely(ie. stop reading from socket when queue is full) as in normal NIO operations if you stop reading
+        //from the socket, the local nic buffer fills up, then the remote nic buffer fills(the client's nic), and so the client is informed
+        //he can't write anymore just yet (or he blocks if he is synchronous).
+        //Then when someone pulls from the queue, the token would be set to enabled allowing to read from nic buffer again and it all propagates
+        //This is normal flow control with NIO but since it is not done properly, this at least fixes the issue where websocket break down and
+        //skip packets.  They no longer skip packets anymore.
+        public void publish(T event) {
+        	try {
+            	//This method blocks if the queue is full(read publish method documentation just above)        		 
+        		if (events.remainingCapacity() == 10) {
+        			Logger.trace("events queue is full! Setting readable to false.");
+        			ctx.getChannel().setReadable(false);
+        		}
+				events.put(event);
+			} catch (InterruptedException e) {
+				throw new RuntimeException(e);
+			}
+            notifyNewEvent();
+        }
+
+        synchronized void notifyNewEvent() {
+            T value = events.peek();
+            for (Promise<T> task : waiting) {
+                task.invoke(value);
+            }
+            waiting.clear();
+        }
+
+        class LazyTask extends Promise<T> {
+
+        	final ChannelHandlerContext ctx;
+        	
+            public LazyTask(ChannelHandlerContext ctx) {
+            	this.ctx = ctx;
+            }
+
+            public LazyTask(T value, ChannelHandlerContext ctx) {
+            	this.ctx = ctx;
+                invoke(value);
+            }
+
+            @Override
+            public T get() throws InterruptedException, ExecutionException {
+                T value = super.get();
+                markAsRead(value);
+                return value;
+            }
+
+            @Override
+            public T getOrNull() {
+                T value = super.getOrNull();
+                markAsRead(value);
+                return value;
+            }
+
+            private void markAsRead(T value) {
+                if (value != null) {
+                    events.remove(value);
+                    //Don't start back up until we get down to half the total capacity to prevent jittering:
+                    if (events.remainingCapacity() > events.size()) 
+                    	ctx.getChannel().setReadable(true);
+                }
+            }
+        }
+    }
+
     public static class IndexedEvent<M> {
 
         private static final AtomicLong idGenerator = new AtomicLong(1);
@@ -546,16 +673,16 @@ public class F {
     public static class ArchivedEventStream<T> {
 
         final int archiveSize;
-        final ConcurrentLinkedQueue<IndexedEvent<T>> events = new ConcurrentLinkedQueue<IndexedEvent<T>>();
+        final ConcurrentLinkedQueue<IndexedEvent<T>> events = new ConcurrentLinkedQueue<>();
         final List<FilterTask<T>> waiting = Collections.synchronizedList(new ArrayList<FilterTask<T>>());
-        final List<EventStream<T>> pipedStreams = new ArrayList<EventStream<T>>();
+        final List<EventStream<T>> pipedStreams = new ArrayList<>();
 
         public ArchivedEventStream(int archiveSize) {
             this.archiveSize = archiveSize;
         }
 
         public synchronized EventStream<T> eventStream() {
-            final EventStream<T> stream = new EventStream<T>(archiveSize);
+            EventStream<T> stream = new EventStream<>(archiveSize);
             for (IndexedEvent<T> event : events) {
                 stream.publish(event.data);
             }
@@ -564,14 +691,14 @@ public class F {
         }
 
         public synchronized Promise<List<IndexedEvent<T>>> nextEvents(long lastEventSeen) {
-            FilterTask<T> filter = new FilterTask<T>(lastEventSeen);
+            FilterTask<T> filter = new FilterTask<>(lastEventSeen);
             waiting.add(filter);
             notifyNewEvent();
             return filter;
         }
 
         public synchronized List<IndexedEvent> availableEvents(long lastEventSeen) {
-            List<IndexedEvent> result = new ArrayList<IndexedEvent>();
+            List<IndexedEvent> result = new ArrayList<>();
             for (IndexedEvent event : events) {
                 if (event.id > lastEventSeen) {
                     result.add(event);
@@ -581,7 +708,7 @@ public class F {
         }
 
         public List<T> archive() {
-            List<T> result = new ArrayList<T>();
+            List<T> result = new ArrayList<>();
             for (IndexedEvent<T> event : events) {
                 result.add(event.data);
             }
@@ -590,6 +717,7 @@ public class F {
 
         public synchronized void publish(T event) {
             if (events.size() >= archiveSize) {
+            	Logger.warn("Dropping message.  If this is catastrophic to your app, use a BlockingEvenStream instead");
                 events.poll();
             }
             events.offer(new IndexedEvent(event));
@@ -614,7 +742,7 @@ public class F {
         static class FilterTask<K> extends Promise<List<IndexedEvent<K>>> {
 
             final Long lastEventSeen;
-            final List<IndexedEvent<K>> newEvents = new ArrayList<IndexedEvent<K>>();
+            final List<IndexedEvent<K>> newEvents = new ArrayList<>();
 
             public FilterTask(Long lastEventSeen) {
                 this.lastEventSeen = lastEventSeen;
@@ -657,7 +785,7 @@ public class F {
         }
 
         public static <T> Some<T> Some(T value) {
-            return new Some<T>(value);
+            return new Some<>(value);
         }
     }
 
@@ -677,6 +805,7 @@ public class F {
             throw new IllegalStateException("No value");
         }
 
+        @Override
         public Iterator<T> iterator() {
             return Collections.<T>emptyList().iterator();
         }
@@ -686,7 +815,7 @@ public class F {
             return "None";
         }
     }
-    public static None<Object> None = new None<Object>();
+    public static None<Object> None = new None<>();
 
     public static class Some<T> extends Option<T> {
 
@@ -706,6 +835,7 @@ public class F {
             return value;
         }
 
+        @Override
         public Iterator<T> iterator() {
             return Collections.singletonList(value).iterator();
         }
@@ -929,7 +1059,7 @@ public class F {
     }
 
     public static <A, B, C, D> T4<A, B, C, D> T4(A a, B b, C c, D d) {
-        return new T4<A, B, C, D>(a, b, c, d);
+        return new T4<>(a, b, c, d);
     }
 
     public static class T5<A, B, C, D, E> {
@@ -955,7 +1085,7 @@ public class F {
     }
 
     public static <A, B, C, D, E> T5<A, B, C, D, E> T5(A a, B b, C c, D d, E e) {
-        return new T5<A, B, C, D, E>(a, b, c, d, e);
+        return new T5<>(a, b, c, d, e);
     }
 
     public static abstract class Matcher<T, R> {

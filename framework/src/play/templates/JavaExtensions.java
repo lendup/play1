@@ -3,25 +3,7 @@ package play.templates;
 import groovy.lang.Closure;
 import groovy.util.XmlSlurper;
 import groovy.util.slurpersupport.GPathResult;
-
-import java.io.PrintWriter;
-import java.io.StringWriter;
-import java.io.UnsupportedEncodingException;
-import java.net.URLEncoder;
-import java.text.*;
-import java.util.Currency;
-import java.util.Date;
-import java.util.Locale;
-import java.util.Arrays;
-import java.util.List;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.TimeZone;
-
 import org.apache.commons.lang.StringEscapeUtils;
-
 import play.Logger;
 import play.i18n.Lang;
 import play.i18n.Messages;
@@ -29,6 +11,13 @@ import play.libs.I18N;
 import play.mvc.Http;
 import play.templates.BaseTemplate.RawData;
 import play.utils.HTML;
+
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.text.*;
+import java.util.*;
 
 /**
  * Java extensions in templates
@@ -52,7 +41,7 @@ public class JavaExtensions {
         try {
             return (new XmlSlurper()).parseText(xml);
         } catch (Exception e) {
-            throw new RuntimeException("invalid XML");
+            throw new RuntimeException("invalid XML", e);
         }
     }
 
@@ -64,7 +53,7 @@ public class JavaExtensions {
     }
 
     public static String[] remove(String[] array, String s) {
-        List<String> temp = new ArrayList<String>(Arrays.asList(array));
+        List<String> temp = new ArrayList<>(Arrays.asList(array));
         temp.remove(s);
         return temp.toArray(new String[temp.size()]);
     }
@@ -80,7 +69,7 @@ public class JavaExtensions {
 
     public static String capitalizeWords(String source) {
         char prevc = ' '; // first char of source is capitalized
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         for (int i = 0; i < source.length(); i++) {
             char c = source.charAt(i);
             if (c != ' ' && prevc == ' ') {
@@ -128,9 +117,9 @@ public class JavaExtensions {
     }
 
     public static RawData asAttr(Map attributes) {
-        StringBuffer buf = new StringBuffer();
+        StringBuilder buf = new StringBuilder();
         for (Object key : attributes.keySet()) {
-            buf.append(key + "=\"" + attributes.get(key) + "\" ");
+            buf.append(key).append("=\"").append(attributes.get(key)).append("\" ");
         }
         return new RawData(buf);
     }
@@ -156,13 +145,13 @@ public class JavaExtensions {
     }
 
     public static String format(Number number, String pattern) {
-        DecimalFormatSymbols symbols = new DecimalFormatSymbols(new Locale(Lang.get()));
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols(Lang.getLocale());
         return new DecimalFormat(pattern, symbols).format(number);
     }
 
     public static String format(Date date) {
         // Get the pattern from the configuration
-        return new SimpleDateFormat(I18N.getDateFormat()).format(date);
+        return format(date, I18N.getDateFormat());
     }
 
     public static String format(Date date, String pattern) {
@@ -170,11 +159,11 @@ public class JavaExtensions {
     }
 
     public static String format(Date date, String pattern, String lang) {
-        return new SimpleDateFormat(pattern, new Locale(lang)).format(date);
+        return new SimpleDateFormat(pattern, Lang.getLocaleOrDefault(lang)).format(date);
     }
 
     public static String format(Date date, String pattern, String lang, String timezone) {
-        DateFormat df = new SimpleDateFormat(pattern, new Locale(lang));
+        DateFormat df = new SimpleDateFormat(pattern, Lang.getLocaleOrDefault(lang));
         df.setTimeZone(TimeZone.getTimeZone(timezone));
         return df.format(date);
     }
@@ -219,12 +208,16 @@ public class JavaExtensions {
         return Messages.get("since.years", years, pluralize(years));
     }
 
+    public static String asdate(Long timestamp) {
+        return asdate(timestamp, I18N.getDateFormat());
+    }
+    
     public static String asdate(Long timestamp, String pattern) {
         return asdate(timestamp, pattern, Lang.get());
     }
 
     public static String asdate(Long timestamp, String pattern, String lang) {
-        return new SimpleDateFormat(pattern, new Locale(lang)).format(new Date(timestamp));
+        return new SimpleDateFormat(pattern, Lang.getLocaleOrDefault(lang)).format(new Date(timestamp));
     }
 
     public static String asdate(Long timestamp, String pattern, String lang, String timezone) {
@@ -267,7 +260,7 @@ public class JavaExtensions {
 
     public static String formatCurrency(Number number, String currencyCode) {
         Currency currency = Currency.getInstance(currencyCode);
-        NumberFormat numberFormat = NumberFormat.getCurrencyInstance(new Locale(Lang.get()));
+        NumberFormat numberFormat = NumberFormat.getCurrencyInstance(Lang.getLocale());
         numberFormat.setCurrency(currency);
         numberFormat.setMaximumFractionDigits(currency.getDefaultFractionDigits());
         String s = numberFormat.format(number);
@@ -405,7 +398,7 @@ public class JavaExtensions {
         if (items == null) {
             return "";
         }
-        StringBuffer sb = new StringBuffer();
+        StringBuilder sb = new StringBuilder();
         Iterator ite = items.iterator();
         int i = 0;
         while (ite.hasNext()) {

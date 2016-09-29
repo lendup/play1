@@ -135,7 +135,7 @@ class IamADeveloper(unittest.TestCase):
         insert(app, 'app/jobs/Job1.java', 5, "public class Job1 extends Job {")
         insert(app, 'app/jobs/Job1.java', 6, "  public void doJob() throws Exception{")
         insert(app, 'app/jobs/Job1.java', 7, '      Logger.info("Job starting");')
-        insert(app, 'app/jobs/Job1.java', 8, '      Thread.sleep(2000);')
+        insert(app, 'app/jobs/Job1.java', 8, '      Thread.sleep(5000);')
         insert(app, 'app/jobs/Job1.java', 9, '      Logger.info("Job done");')
         insert(app, 'app/jobs/Job1.java', 10, '  }')
         insert(app, 'app/jobs/Job1.java', 11, '}')
@@ -252,7 +252,8 @@ class IamADeveloper(unittest.TestCase):
         
         # Open the documentation
         step('Open the documentation')
-        
+    
+        browser.addheaders = [("Accept-Language", "en")]
         response = browser.open('http://localhost:9000/@documentation')
         self.assert_(browser.viewing_html())
         self.assert_(browser.title() == 'Play manual - Documentation')
@@ -405,7 +406,7 @@ class IamADeveloper(unittest.TestCase):
             self.assert_(html.count('Cannot get property \'name\' on null object'))
             self.assert_(waitFor(self.play, 'ERROR ~'))
             self.assert_(waitFor(self.play, 'Template execution error (In /app/views/Application/index.html around line 4)'))
-            self.assert_(waitFor(self.play, 'Execution error occured in template /app/views/Application/index.html.'))
+            self.assert_(waitFor(self.play, 'Execution error occurred in template /app/views/Application/index.html.'))
             self.assert_(waitFor(self.play, 'at Invocation.HTTP Request(Play!)'))
             self.assert_(waitFor(self.play, 'at /app/views/Application/index.html.(line:4)'))
             self.assert_(waitFor(self.play, '...'))
@@ -425,7 +426,7 @@ class IamADeveloper(unittest.TestCase):
             self.assert_(html.count('Cannot get property \'name\' on null object'))
             self.assert_(waitFor(self.play, 'ERROR ~'))
             self.assert_(waitFor(self.play, 'Template execution error (In /app/views/Application/index.html around line 4)'))
-            self.assert_(waitFor(self.play, 'Execution error occured in template /app/views/Application/index.html.'))
+            self.assert_(waitFor(self.play, 'Execution error occurred in template /app/views/Application/index.html.'))
             self.assert_(waitFor(self.play, 'at Invocation.HTTP Request(Play!)'))
             self.assert_(waitFor(self.play, 'at /app/views/Application/index.html.(line:4)'))
             self.assert_(waitFor(self.play, '...'))
@@ -457,7 +458,7 @@ class IamADeveloper(unittest.TestCase):
             self.assert_(html.count('In /app/controllers/Application.java (around line 13)'))
             self.assert_(waitFor(self.play, 'ERROR ~'))
             self.assert_(waitFor(self.play, 'Execution exception (In /app/controllers/Application.java around line 13)'))
-            self.assert_(waitFor(self.play, 'ArithmeticException occured : / by zero'))
+            self.assert_(waitFor(self.play, 'ArithmeticException occurred : / by zero'))
             self.assert_(waitFor(self.play, 'at controllers.Application.index(Application.java:13)'))
             self.assert_(waitFor(self.play, '...'))
 
@@ -476,7 +477,7 @@ class IamADeveloper(unittest.TestCase):
             self.assert_(html.count('In /app/controllers/Application.java (around line 13)'))
             self.assert_(waitFor(self.play, 'ERROR ~'))
             self.assert_(waitFor(self.play, 'Execution exception (In /app/controllers/Application.java around line 13)'))
-            self.assert_(waitFor(self.play, 'ArithmeticException occured : / by zero'))
+            self.assert_(waitFor(self.play, 'ArithmeticException occurred : / by zero'))
             self.assert_(waitFor(self.play, 'at controllers.Application.index(Application.java:13)'))
             self.assert_(waitFor(self.play, '...'))
 
@@ -647,6 +648,9 @@ def bootstrapWorkingDirectory( folder ):
 
 def callPlay(self, args):
     play_script = os.path.join(self.working_directory, '../../../play')
+    if sys.platform.startswith('win32'):
+        play_script += "".join('.bat')
+        
     process_args = [play_script] + args
     play_process = subprocess.Popen(process_args,stdout=subprocess.PIPE)
     return play_process
@@ -656,14 +660,16 @@ def waitFor(process, pattern):
     return waitForWithFail(process, pattern, "")
     
 
-#returns true when pattern is seen, but false if failPattern is seen
+#returns true when pattern is seen, but false if failPattern is not seen or if timeout
 def waitForWithFail(process, pattern, failPattern):
-    timer = threading.Timer(5, timeout, [process])
+    timer = threading.Timer(90, timeout, [process])
     timer.start()
     while True:
+	sys.stdout.flush()
         line = process.stdout.readline().strip()
-        #print timeoutOccured
-        if timeoutOccured:
+	sys.stdout.flush()
+        #print timeoutOccurred
+        if timeoutOccurred:
             return False
         if line == '@KILLED':
             return False
@@ -675,13 +681,13 @@ def waitForWithFail(process, pattern, failPattern):
             timer.cancel()
             return True
 
-timeoutOccured = False
+timeoutOccurred = False
 
 def timeout(process):
-    global timeoutOccured 
+    global timeoutOccurred 
     print '@@@@ TIMEOUT !'
     killPlay()
-    timeoutOccured = True
+    timeoutOccurred = True
 
 def killPlay():
     try:

@@ -1,16 +1,16 @@
 package play.deps;
 
 import java.io.File;
-import java.io.IOException;
 import java.io.FileFilter;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import org.apache.commons.io.FileUtils;
 import org.apache.ivy.Ivy;
-import org.apache.ivy.core.cache.DefaultRepositoryCacheManager;
-import org.apache.ivy.core.cache.RepositoryCacheManager;
 import org.apache.ivy.core.report.ArtifactDownloadReport;
 import org.apache.ivy.core.report.ResolveReport;
 import org.apache.ivy.core.resolve.IvyNode;
@@ -26,7 +26,7 @@ import play.libs.Files;
 import play.libs.IO;
 
 public class DependenciesManager {
-
+   
     public static void main(String[] args) throws Exception {
 
         // Paths
@@ -60,7 +60,8 @@ public class DependenciesManager {
     HumanReadyLogger logger;
     
     final FileFilter dirsToTrim = new FileFilter() {
-    
+
+        @Override
         public boolean accept(File file) {
             return file.isDirectory() && isDirToTrim(file.getName());
         }
@@ -102,7 +103,7 @@ public class DependenciesManager {
 
     public void sync(List<File> installed) {
 
-        List<File> notSync = new ArrayList<File>();
+        List<File> notSync = new ArrayList<>();
 
         File[] paths = new File[]{
             new File(application, "lib"),
@@ -132,7 +133,7 @@ public class DependenciesManager {
         } else if (!notSync.isEmpty()) {
             System.out.println("~");
             System.out.println("~ *****************************************************************************");
-            System.out.println("~ WARNING: Your lib/ and modules/ directories and not synced with current dependencies (use --sync to automatically delete them)");
+            System.out.println("~ WARNING: Your lib/ and modules/ directories are not synced with current dependencies (use --sync to automatically delete them)");
             System.out.println("~");
             for (File f : notSync) {
                 System.out.println("~ \tUnknown: " + f.getAbsolutePath());
@@ -158,14 +159,22 @@ public class DependenciesManager {
         return false;
     }
 
+    // Retrieve the list of modules in the order they were defined in the dependencies.yml.
+    public Set<String> retrieveModules() throws Exception {
+    	File ivyModule = new File(application, "conf/dependencies.yml");
+        if(ivyModule == null || !ivyModule.exists()) {
+            return new LinkedHashSet<>();
+        }
+    	return YamlParser.getOrderedModuleList(ivyModule);
+    }
+	
     public List<File> retrieve(ResolveReport report) throws Exception {
-
+	    	
         // Track missing artifacts
-        List<ArtifactDownloadReport> missing = new ArrayList<ArtifactDownloadReport>();
+        List<ArtifactDownloadReport> missing = new ArrayList<>();
 
-        List<ArtifactDownloadReport> artifacts = new ArrayList<ArtifactDownloadReport>();
-        for (Iterator iter = report.getDependencies().iterator(); iter.hasNext();) {
-            IvyNode node = (IvyNode) iter.next();
+        List<ArtifactDownloadReport> artifacts = new ArrayList<>();
+        for (IvyNode node : ((List<IvyNode>) report.getDependencies())) {
             if (node.isLoaded() && !node.isCompletelyEvicted()) {
                 ArtifactDownloadReport[] adr = report.getArtifactsReports(node.getResolvedId());
                 for (ArtifactDownloadReport artifact : adr) {
@@ -174,12 +183,27 @@ public class DependenciesManager {
                     } else {
                         if (isPlayModule(artifact) || !isFrameworkLocal(artifact)) {
                             artifacts.add(artifact);
+                            
+                            // Save the order of module
+                            if(isPlayModule(artifact)){
+                                String mName = artifact.getLocalFile().getName();
+                                if (mName.endsWith(".jar") || mName.endsWith(".zip")) {
+                                    mName = mName.substring(0, mName.length() - 4); 
+                                }
+                            }
                         }
                     }
                 }
             }
         }
-
+        
+        // Create directory if not exist
+        File modulesDir = new File(application, "modules");
+        if(!modulesDir.exists()){
+            modulesDir.mkdir();
+        }
+          
+     
         if (!missing.isEmpty()) {
             System.out.println("~");
             System.out.println("~ WARNING: Some dependencies could not be downloaded (use --verbose for details),");
@@ -193,7 +217,7 @@ public class DependenciesManager {
             }
         }
 
-        List<File> installed = new ArrayList<File>();
+        List<File> installed = new ArrayList<>();
 
         // Install
         if (artifacts.isEmpty()) {
@@ -354,15 +378,17 @@ public class DependenciesManager {
         ivySettings.setDefaultUseOrigin(true);
         PlayConflictManager conflictManager = new PlayConflictManager();
         ivySettings.addConflictManager("playConflicts", conflictManager);
-        ivySettings.addConflictManager("defaultConflicts", conflictManager.deleguate);
+        ivySettings.addConflictManager("defaultConflicts", conflictManager.delegate);
         ivySettings.setDefaultConflictManager(conflictManager);
 
         Ivy ivy = Ivy.newInstance(ivySettings);
 
         // Default ivy config see: http://play.lighthouseapp.com/projects/57987-play-framework/tickets/807
-        File ivyDefaultSettings = new File(userHome, ".ivy2/ivysettings.xml");
-        if(ivyDefaultSettings.exists()) {
-            ivy.configure(ivyDefaultSettings);
+        if(userHome != null){
+            File ivyDefaultSettings = new File(userHome, ".ivy2/ivysettings.xml");
+            if(ivyDefaultSettings != null && ivyDefaultSettings.exists()) {
+                ivy.configure(ivyDefaultSettings);
+            }
         }
 
         if (debug) {

@@ -3,20 +3,18 @@
 	open('@{Fields.index()}')
 	assertTextNotPresent('Required')
 	assertValue('project_name', '')
-	
+
 	clickAndWait('go')
 	assertTextPresent('Required')
 	assertValue('project_name', '')
-	
+
 	type('project_name', 'Colcoz')
 	clickAndWait('go')
 	assertTextNotPresent('Required')
-	assertValue('project_name', 'Colcoz')
-
+    assertValue('project_name', 'Colcoz')
 #{/selenium}
 
 #{selenium 'Test private null and path #field'}
-
     open('@{Fields.testField()}')
     assertValue('subProject_subProjectObservation', 'sub project observation value')
     assertValue('subProject_subProjectName', 'sub project name value')
@@ -24,7 +22,7 @@
     assertValue('subProject_name', 'project name value')
     assertValue('subProject_parent_observation', 'parent project observation value')
     assertValue('subProject_parent_name', 'parent project name value')
-    
+
     assertValue('subProjectNull_subProjectObservation', '')
     assertValue('subProjectNull_subProjectName', '')
     assertValue('subProjectNull_observation', '')

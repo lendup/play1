@@ -1,11 +1,9 @@
 package play.utils;
 
-import net.sf.oval.internal.util.LinkedSet;
-import org.apache.commons.codec.net.URLCodec;
+
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang.StringEscapeUtils;
 
-import java.beans.Encoder;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -19,7 +17,7 @@ import java.util.*;
 public class OrderSafeProperties extends java.util.Properties {
 
     // set used to preserve key order
-    private final LinkedHashSet<Object> keys = new LinkedHashSet<Object>();
+    private final LinkedHashSet<Object> keys = new LinkedHashSet<>();
 
     @Override
     public void load(InputStream inputStream) throws IOException {
@@ -84,7 +82,7 @@ public class OrderSafeProperties extends java.util.Properties {
 
     @Override
     public Set<Map.Entry<Object, Object>> entrySet() {
-        Set<Map.Entry<Object, Object>> entrySet = new LinkedSet<Map.Entry<Object, Object>>(keys.size());
+        Set<Map.Entry<Object, Object>> entrySet = new LinkedHashSet<>(keys.size());
         for (Object key : keys) {
             entrySet.add(new Entry(key, get(key)));
         }
@@ -101,14 +99,17 @@ public class OrderSafeProperties extends java.util.Properties {
             this.value = value;
         }
 
+        @Override
         public Object getKey() {
             return key;
         }
 
+        @Override
         public Object getValue() {
             return value;
         }
 
+        @Override
         public Object setValue(Object o) {
             throw new IllegalStateException("not implemented");
         }

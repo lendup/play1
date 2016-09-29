@@ -29,13 +29,14 @@ public class FlashPolicyHandler extends FrameDecoder {
         this.policyResponse = policyResponse;
     }
 
+    @Override
     protected Object decode(ChannelHandlerContext ctx, Channel channel, ChannelBuffer buffer) throws Exception {
         if (buffer.readableBytes() < 2) {
             return null;
         }
 
-        final int magic1 = buffer.getUnsignedByte(buffer.readerIndex());
-        final int magic2 = buffer.getUnsignedByte(buffer.readerIndex() + 1);
+        int magic1 = buffer.getUnsignedByte(buffer.readerIndex());
+        int magic2 = buffer.getUnsignedByte(buffer.readerIndex() + 1);
         boolean isFlashPolicyRequest = (magic1 == '<' && magic2 == 'p');
 
         if (isFlashPolicyRequest) {

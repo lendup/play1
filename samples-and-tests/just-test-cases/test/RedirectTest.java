@@ -43,18 +43,19 @@ public class RedirectTest extends FunctionalTest {
 		assertEquals("http://" + req.domain + ":" + req.port + "/someurl", location);
 
 	}
-	
+
 	//[#1675] exponential redirect regression
 	@Test
 	public void timeSpendInRederect_expectContstant() {
 
 		long shortUrlmSecs = timeRedirectRequest("result-a/");
 		long longUrlmSecs =  timeRedirectRequest("result-abcdefghijklmnopq/");
-		// on core2 duo timing used to be 30ms vs 2000ms - so afactor 2 seems reasonable
+		// on core2 duo timing used to be 30ms vs 2000ms
 		// should be constant now
 		String msg = String.format("long redirect takes exponentially longer %s vs %s", shortUrlmSecs, longUrlmSecs);
-		assertFalse(msg, longUrlmSecs/shortUrlmSecs > 2 );
-		
+		assertTrue(msg, longUrlmSecs < 400 );
+		assertTrue(msg, shortUrlmSecs < 400 );
+
 	}
 	//[#1675] make sure Action redirects still work
 	@Test
@@ -69,18 +70,18 @@ public class RedirectTest extends FunctionalTest {
 		// note: only works if port is not 80
 		// in that case relative url is returned for ease of testing
 		assertEquals("http://" + req.domain + ":" + req.port + "/sayHello", location);
-		
+
 	}
 
 
-	
-	
+
+
 
 	private long timeRedirectRequest(String target){
 		long start = System.currentTimeMillis();
 		final Request req = newRequest();
 		final Response response = GET(req, "/redirector/index?target=" + URLs.encodePart(target));
-		assertStatus(302, response);		
+		assertStatus(302, response);
 		return( System.currentTimeMillis() - start);
 	}
 

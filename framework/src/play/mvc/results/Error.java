@@ -17,7 +17,7 @@ import play.templates.TemplateLoader;
  */
 public class Error extends Result {
 
-    private int status;
+    protected int status;
 
     public Error(String reason) {
         super(reason);
@@ -29,6 +29,7 @@ public class Error extends Result {
         this.status = status;
     }
 
+    @Override
     public void apply(Request request, Response response) {
         response.status = status;
         String format = request.format;
@@ -48,7 +49,7 @@ public class Error extends Result {
         try {
             errorHtml = TemplateLoader.load("errors/" + this.status + "." + (format == null ? "html" : format)).render(binding);
         } catch (Exception e) {
-            Logger.warn(e, "Error page caused an error");
+            // no template in desired format, just display the default response
         }
         try {
             response.out.write(errorHtml.getBytes(getEncoding()));

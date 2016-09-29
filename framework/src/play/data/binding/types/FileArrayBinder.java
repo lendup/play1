@@ -17,20 +17,29 @@ import java.util.List;
 public class FileArrayBinder implements TypeBinder<File[]> {
 
     @SuppressWarnings("unchecked")
+    @Override
     public File[] bind(String name, Annotation[] annotations, String value, Class actualClass, Type genericType) {
         if (value == null || value.trim().length() == 0) {
             return null;
         }
-        List<Upload> uploads = (List<Upload>) Request.current().args.get("__UPLOADS");
-        List<File> fileArray = new ArrayList<File>();
-        for (Upload upload : uploads) {
-            if (upload.getFieldName().equals(value)) {
-                File file = upload.asFile();
-                if (file.length() > 0) {
-                    fileArray.add(file);
+        Request req = Request.current();
+        if (req != null && req.args != null) {
+            List<File> fileArray = new ArrayList<>();
+            List<Upload> uploads = (List<Upload>) req.args.get("__UPLOADS");
+            if (uploads != null) {
+                for (Upload upload : uploads) {
+                    if (upload.getFieldName().equals(value)) {
+                        if (upload.getSize() != null && upload.getSize() > 0) {
+                            File file = upload.asFile();
+                            if (file.length() > 0) {
+                                fileArray.add(file);
+                            }
+                        }
+                    }
                 }
             }
+            return fileArray.toArray(new File[fileArray.size()]);
         }
-        return fileArray.toArray(new File[fileArray.size()]);
+        return null;
     }
 }

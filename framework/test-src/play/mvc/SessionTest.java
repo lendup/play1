@@ -1,12 +1,9 @@
 package play.mvc;
 
 import java.lang.reflect.*;
-import java.util.HashMap;
-
 import org.junit.*;
 
 import play.Play;
-import play.libs.Crypto;
 import play.PlayBuilder;
 import play.mvc.Http.*;
 import play.mvc.Scope.Session;
@@ -107,7 +104,7 @@ public class SessionTest {
 
     @After
     public void restoreDefault() {
-        final boolean SESSION_SEND_ONLY_IF_CHANGED = Play.configuration.getProperty("application.session.sendOnlyIfChanged", "false").toLowerCase().equals("true"); 
+        boolean SESSION_SEND_ONLY_IF_CHANGED = Play.configuration.getProperty("application.session.sendOnlyIfChanged", "false").toLowerCase().equals("true"); 
         setSendOnlyIfChangedConstant(SESSION_SEND_ONLY_IF_CHANGED);
     }
 }

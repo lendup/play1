@@ -1,6 +1,11 @@
 package play.templates;
 
 import groovy.lang.Closure;
+import play.Logger;
+import play.Play;
+import play.exceptions.TemplateCompilationException;
+import play.templates.GroovyInlineTags.CALL;
+
 import java.io.PrintWriter;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -9,29 +14,19 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Map.Entry;
 import java.util.regex.Pattern;
-import play.Play;
-import play.Logger;
-import play.exceptions.TemplateCompilationException;
-import play.templates.GroovyInlineTags.CALL;
 
-/**
- * The template compiler
- */
 public class GroovyTemplateCompiler extends TemplateCompiler {
 
-    static public List<String> extensionsClassnames = new ArrayList<String>();
+    protected List<String> extensionsClassnames = new ArrayList<>();
 
     // [#714] The groovy-compiler complaints if a line is more than 65535 unicode units long..
     // Have to split it if it is really that big
     protected static final int maxPlainTextLength = 60000;
 
-    // move the building of the extension class name into a static initializer
-    // in order to make it thread-safe (previously it was building every time
-    // compile() was called.
-    //
-    static {
+
+    @Override
+    public BaseTemplate compile(BaseTemplate template) {
         try {
             extensionsClassnames.clear();
             extensionsClassnames.addAll( Play.pluginCollection.addTemplateExtensions());
@@ -40,18 +35,37 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
                 extensionsClassnames.add(extensionsClass.getName());
             }
         } catch (Throwable e) {
-            Logger.error(e, "unable to load class extensions!: %s", e.getMessage());
+            Logger.error(e, "Failed to compile template %s", template.getName());
         }
+        return super.compile(template);
     }
 
-    final static Map<String,List<Pattern>> classToRegexMap;
-    final static Map<String, String> originalNames = new HashMap<String, String>();
+    @Override
+    protected String source() {
+        String source = template.source;
 
-    static {
-        classToRegexMap = new HashMap<String,List<Pattern>>();
+        // If a plugin has something to change in the template before the compilation
+        source = Play.pluginCollection.overrideTemplateSource(template, source);
 
+        if(Boolean.parseBoolean(Play.configuration.getProperty("groovy.template.check.scala.comptatibility", "false"))){
+            source = this.checkScalaCompatibility(source);
+        }
+
+        return source;
+    }
+
+    @Deprecated
+    protected String checkScalaComptability(String source){
+        return checkScalaCompatibility(source);
+    }
+
+    /**
+     * Makes the code scala compatible (for the scala module).
+     */
+    protected String checkScalaCompatibility(String source){
         // Static access
-        List<String> names = new ArrayList<String>();
+        List<String> names = new ArrayList<>();
+        Map<String, String> originalNames = new HashMap<>();
         for (Class clazz : Play.classloader.getAllClasses()) {
             if (clazz.getName().endsWith("$")) {
                 String name = clazz.getName().substring(0, clazz.getName().length() - 1).replace('$', '.') + '$';
@@ -64,102 +78,61 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
             }
         }
         Collections.sort(names, new Comparator<String>() {
-
+            @Override
             public int compare(String o1, String o2) {
                 return o2.length() - o1.length();
             }
         });
 
-        for (String cName : names) {
-            classToRegexMap.put(cName, new ArrayList<Pattern>());
-            classToRegexMap.get(cName).add(Pattern.compile("new " + Pattern.quote(cName) + "(\\([^)]*\\))"));
-            classToRegexMap.get(cName).add(Pattern.compile("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName)));
-            classToRegexMap.get(cName).add(Pattern.compile("([^.])" + Pattern.quote(cName) + ".class"));
-            classToRegexMap.get(cName).add(Pattern.compile("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])"));
-        }
-    }
-
-    @Override
-    String source() {
-        String source = template.source;
-
-        // If a plugin has something to change in the template before the compilation
-        source = Play.pluginCollection.overrideTemplateSource(template, source);
-
-        // We're about to do many many String.replaceAll() so we do some checking first
+        // We're about to do many many String.replaceAll() so we do some
+        // checking first
         // to try to reduce the number of needed replaceAll-calls.
-        // Morten: I have tried to create a single regexp that can be used instead of all the replaceAll,
-        // but I failed to do so.. Such a single regexp would be much faster since
+        // Morten: I have tried to create a single regexp that can be used
+        // instead of all the replaceAll,
+        // but I failed to do so.. Such a single regexp would be much faster
+        // since
         // we then we only would have to have one pass.
 
-        if (!classToRegexMap.isEmpty()) {
-            // Keep track of a dirty bit to see whether any of the first three
-            // dynamic class binding rewrites were applied. If none of them
-            // were used, skip the class name rewriting.
-            //
-            // All class names in LendUp templates were manually rewritten from
-            //   com.foo.Foo
-            // to
-            //   _('com.foo.Foo')
-            // so that we could avoid this step. Note that an inner class would
-            // be rewritten to something like _('com.foo.Foo$Inner') instead.
-            //
-            // By skipping this step, we save (# of loaded classes) * (# of templates)
-            // regex search-replaces. At the time of writing, that amounts to
-            // about 3000 * 1200 ~ 3.6 million replaces.
-            //
-            // If the filename is of the form "{module:...}", let's assume that
-            // we don't control it and apply the class name rewrite defensively.
-            boolean dirty = template.name.startsWith("{module:");
+        if (!names.isEmpty()) {
 
-            if (classToRegexMap.size() <= 1 || source.indexOf("new ")>=0) {
-                String origSource = source;
-
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(0).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').newInstance$1");
-                }
-
-                dirty |= !origSource.equals(source);
-            }
-
-            if (classToRegexMap.size() <= 1 || source.indexOf("instanceof")>=0) {
-                String origSource = source;
-
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(1).matcher(source).replaceAll("_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "').isAssignableFrom($1.class)");
-                }
-
-                dirty |= !origSource.equals(source);
-            }
-
-            if (classToRegexMap.size() <= 1 || source.indexOf(".class")>=0) {
-                String origSource = source;
-
-                for (Entry<String,List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(2).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')");
-
-                }
-
-                dirty |= !origSource.equals(source);
-            }
-
-            // We only want to remap class names if we encountered any of the previous
-            // patterns (new keyword, .class, instanceof)
-            if (dirty) {
-                // With the current arg0 in replaceAll, it is not possible to do a quick indexOf-check for this one,
-                // so we have to run all the replaceAll-calls
-                for (Entry<String, List<Pattern>> e : classToRegexMap.entrySet()) {
-                    source = e.getValue().get(3).matcher(source).replaceAll("$1_('" + originalNames.get(e.getKey()).replace("$", "\\$") + "')$2");
+            if (names.size() <= 1 || source.contains("new ")) {
+                for (String cName : names) { // dynamic class binding
+                    source = source.replaceAll("new " + Pattern.quote(cName) + "(\\([^)]*\\))", "_('"
+                        + originalNames.get(cName).replace("$", "\\$") + "').newInstance$1");
                 }
             }
+
+            if (names.size() <= 1 || source.contains("instanceof")) {
+                for (String cName : names) { // dynamic class binding
+                    source = source.replaceAll("([a-zA-Z0-9.-_$]+)\\s+instanceof\\s+" + Pattern.quote(cName), "_('"
+                        + originalNames.get(cName).replace("$", "\\$") + "').isAssignableFrom($1.class)");
+
+                }
+            }
+
+            if (names.size() <= 1 || source.contains(".class")) {
+                for (String cName : names) { // dynamic class binding
+                    source = source.replaceAll("([^.])" + Pattern.quote(cName) + ".class",
+                        "$1_('" + originalNames.get(cName).replace("$", "\\$") + "')");
+
+                }
+            }
+
+            // With the current arg0 in replaceAll, it is not possible to do a
+            // quick indexOf-check for this one,
+            // so we have to run all the replaceAll-calls
+            for (String cName : names) { // dynamic class binding
+                source = source.replaceAll("([^'\".])" + Pattern.quote(cName) + "([.][^'\"])", "$1_('"
+                    + originalNames.get(cName).replace("$", "\\$") + "')$2");
+
+            }
+
         }
-
-
         return source;
     }
 
     @Override
-    void head() {
+    protected void head() {
         print("class ");
         //This generated classname is parsed when creating cleanStackTrace.
         //The part after "Template_" is used as key when
@@ -179,7 +152,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
 
     @Override
     @SuppressWarnings("unused")
-    void end() {
+    protected void end() {
         for (String n : extensionsClassnames) {
             println(" } ");
         }
@@ -196,7 +169,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
      */
 
     @Override
-    void plain() {
+    protected void plain() {
         String text = parser.getToken().replace("\\", "\\\\").replaceAll("\"", "\\\\\"").replace("$", "\\$");
         if (skipLineBreak && text.startsWith("\n")) {
             text = text.substring(1);
@@ -232,9 +205,9 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void script() {
+    protected void script() {
         String text = parser.getToken();
-        if (text.indexOf("\n") > -1) {
+        if (text.contains("\n")) {
             String[] lines = parser.getToken().split("\n");
             for (int i = 0; i < lines.length; i++) {
                 print(lines[i]);
@@ -250,7 +223,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void expr() {
+    protected void expr() {
         String expr = parser.getToken().trim();
         print(";out.print(__safeFaster("+expr+"))");
         markLine(parser.getLine());
@@ -258,7 +231,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void message() {
+    protected void message() {
         String expr = parser.getToken().trim();
         print(";out.print(__getMessage("+expr+"))");
         markLine(parser.getLine());
@@ -266,7 +239,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void action(boolean absolute) {
+    protected void action(boolean absolute) {
         String action = parser.getToken().trim();
         if (action.trim().matches("^'.*'$")) {
             if (absolute) {
@@ -289,11 +262,11 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void startTag() {
+    protected void startTag() {
         tagIndex++;
         String tagText = parser.getToken().trim().replaceAll("\r", "").replaceAll("\n", " ");
-        String tagName = "";
-        String tagArgs = "";
+        String tagName;
+        String tagArgs;
         boolean hasBody = !parser.checkNext().endsWith("/");
         if (tagText.indexOf(" ") > 0) {
             tagName = tagText.substring(0, tagText.indexOf(" "));
@@ -327,14 +300,14 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         try {
             Method m = GroovyInlineTags.class.getDeclaredMethod("_" + tag.name, int.class, CALL.class);
             print("play.templates.TagContext.enterTag('" + tag.name + "');");
-            print((String) m.invoke(null, new Object[]{tagIndex, CALL.START}));
+            print((String) m.invoke(null, tagIndex, CALL.START));
             tag.hasBody = false;
             markLine(parser.getLine());
             println();
             skipLineBreak = true;
             return;
         } catch (Exception e) {
-            // do nothing here
+            Logger.debug(e, "Failed to start tag %s in template %s", tag.name, template.getName());
         }
         if (!tag.name.equals("doBody") && hasBody) {
             print("body" + tagIndex + " = {");
@@ -350,7 +323,7 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
     }
 
     @Override
-    void endTag() {
+    protected void endTag() {
         String tagName = parser.getToken().trim();
         if (tagsStack.isEmpty()) {
             throw new TemplateCompilationException(template, parser.getLine(), "#{/" + tagName + "} is not opened.");
@@ -381,17 +354,14 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
             // Use inlineTag if exists
             try {
                 Method m = GroovyInlineTags.class.getDeclaredMethod("_" + tag.name, int.class, CALL.class);
-                println((String) m.invoke(null, new Object[]{tagIndex, CALL.END}));
+                println((String) m.invoke(null, tagIndex, CALL.END));
                 print("play.templates.TagContext.exitTag();");
             } catch (Exception e) {
                 // Use fastTag if exists
-                List<Class> fastClasses = new ArrayList<Class>();
-                try {
-                    fastClasses = Play.classloader.getAssignableClasses(FastTags.class);
-                } catch (Exception xe) {
-                    //
-                }
-                fastClasses.add(0, FastTags.class);
+                List<Class> fastClasses = new ArrayList<>();
+                fastClasses.add(FastTags.class);
+                fastClasses.addAll(Play.classloader.getAssignableClasses(FastTags.class));
+
                 Method m = null;
                 String tName = tag.name;
                 String tSpace = "";
@@ -408,8 +378,9 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
                     }
                     try {
                         m = c.getDeclaredMethod("_" + tName, Map.class, Closure.class, PrintWriter.class, GroovyTemplate.ExecutableTemplate.class, int.class);
+                        break;
                     } catch (NoSuchMethodException ex) {
-                        continue;
+                        // continue looking for this method in other *FastTags implementations
                     }
                 }
                 if (m != null) {
@@ -427,5 +398,4 @@ public class GroovyTemplateCompiler extends TemplateCompiler {
         skipLineBreak = true;
     }
 }
-
 

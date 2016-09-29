@@ -1,11 +1,5 @@
 package play.classloading.enhancers;
 
-import java.io.InputStream;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
-
 import javassist.CannotCompileException;
 import javassist.CtClass;
 import javassist.CtMethod;
@@ -15,9 +9,13 @@ import org.apache.commons.javaflow.bytecode.transformation.asm.AsmClassTransform
 import play.Play;
 import play.classloading.ApplicationClasses.ApplicationClass;
 
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.List;
+
 public class ContinuationEnhancer extends Enhancer {
 
-    static final List<String> continuationMethods = new ArrayList<String>();
+    static final List<String> continuationMethods = new ArrayList<>();
 
     static {
         continuationMethods.add("play.mvc.Controller.await(java.lang.String)");
@@ -62,9 +60,9 @@ public class ContinuationEnhancer extends Enhancer {
         // we add the interface EnhancedForContinuations to the class
         CtClass enhancedForContinuationsInterface;
         try {
-            InputStream in = getClass().getClassLoader().getResourceAsStream("play/classloading/enhancers/EnhancedForContinuations.class");
-            enhancedForContinuationsInterface = classPool.makeClass( in );
-            in.close();
+            try (InputStream in = getClass().getClassLoader().getResourceAsStream("play/classloading/enhancers/EnhancedForContinuations.class")) {
+                enhancedForContinuationsInterface = classPool.makeClass(in);
+            }
         } catch (Exception e) {
             throw new RuntimeException(e);
         }
@@ -84,7 +82,6 @@ public class ContinuationEnhancer extends Enhancer {
             return false;
         }
 
-        boolean needsContinuations = false;
         final boolean[] _needsContinuations = new boolean[]{false};
 
         for (CtMethod m : ctClass.getDeclaredMethods()) {

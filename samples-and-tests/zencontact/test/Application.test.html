@@ -3,7 +3,7 @@
 #{fixture delete:'all', load:'test-data.yml' /}
 
 #{selenium}
-    // Open the home page, and check that no error occured
+    // Open the home page, and check that no error occurred
     open('/')
     assertNotTitle('Application error')
     assertTextPresent('Zencontact')
@@ -11,9 +11,9 @@
     
     // Test time update
     storeText('time', 'oldTime')
-    pause(1100)
+    pause(2000)
     storeText('time', 'newTime')
-    assertNotEquals('$[oldTime]', '$[newTime]')
+    assertNotEquals('${'${oldTime}'.escape()}', '${'${newTime}'.escape()}')
     
     // Go to List page
     clickAndWait('link=List')

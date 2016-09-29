@@ -7,7 +7,6 @@ import java.util.*;
 import play.Logger;
 import play.classloading.enhancers.PropertiesEnhancer.PlayPropertyAccessor;
 import play.exceptions.UnexpectedException;
-import play.utils.Utils;
 
 /**
  * Parameters map to POJO binder.
@@ -22,7 +21,7 @@ public class BeanWrapper {
     /** 
      * a cache for our properties and setters
      */
-    private Map<String, Property> wrappers = new HashMap<String, Property>();
+    private Map<String, Property> wrappers = new HashMap<>();
 
     public BeanWrapper(Class<?> forClass) {
         if (Logger.isTraceEnabled()) {
@@ -72,7 +71,7 @@ public class BeanWrapper {
     }
 
     protected Object newBeanInstance() throws InstantiationException, IllegalAccessException, NoSuchMethodException, InvocationTargetException {
-        Constructor constructor = beanClass.getDeclaredConstructor();
+        Constructor<?> constructor = beanClass.getDeclaredConstructor();
         constructor.setAccessible(true);
         return constructor.newInstance();
     }
@@ -225,8 +224,6 @@ public class BeanWrapper {
         public String toString() {
             return type + "." + name;
         }
-
-
     }
 
     public Object bind(String name, Type type, Map<String, String[]> params, String prefix, Annotation[] annotations) throws Exception {

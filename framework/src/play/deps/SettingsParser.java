@@ -27,7 +27,7 @@ public class SettingsParser {
         }
     }
     
-    HumanReadyLogger logger;
+    private final HumanReadyLogger logger;
 
     public SettingsParser(HumanReadyLogger logger) {
         this.logger = logger;
@@ -41,7 +41,7 @@ public class SettingsParser {
 
         try {
             Yaml yaml = new Yaml();
-            Object o = null;
+            Object o;
 
             // Try to parse the yaml
             try {
@@ -55,7 +55,7 @@ public class SettingsParser {
                 throw new Oops("Unexpected format -> " + o);
             }
 
-            Map data = (Map) o;
+            Map<String, Object> data = (Map<String, Object>) o;
 
             parseIncludes(settings, data);
 
@@ -63,7 +63,7 @@ public class SettingsParser {
                 if (data.get("repositories") instanceof List) {
 
                     List repositories = (List) data.get("repositories");
-                    List<Map<String, String>> modules = new ArrayList<Map<String, String>>();
+                    List<Map<String, String>> modules = new ArrayList<>();
                     for (Object dep: repositories) {
                         if (dep instanceof Map) {
                             settings.addResolver(parseRepository((Map) dep, modules));
@@ -94,10 +94,10 @@ public class SettingsParser {
     /**
      * Look for an "include" property containing a list of yaml descriptors and load their repositories.
      */
-    private void parseIncludes(IvySettings settings, Map data) throws Oops {
+    private void parseIncludes(IvySettings settings, Map<String, Object> data) throws Oops {
         if (data.containsKey("include") && data.get("include") != null) {
             if (data.get("include") instanceof List) {
-                List<?> includes = (List)data.get("include");
+                List<?> includes = (List<?>)data.get("include");
                 if (includes != null) {
                     for (Object inc : includes) {
                         File include = new File(substitute(inc.toString()));
@@ -210,12 +210,12 @@ public class SettingsParser {
                             if (m.matches()) {
                                 organisation = m.group(1);
                             } else {
-                                throw new Oops("Unknown depedency format -> " + o);
+                                throw new Oops("Unknown dependency format -> " + o);
                             }
                         }
                     }
                 }
-                Map<String, String> attributes = new HashMap<String, String>();
+                Map<String, String> attributes = new HashMap<>();
                 attributes.put("organisation", organisation);
                 if (module != null) {
                     attributes.put("module", module);

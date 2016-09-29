@@ -14,7 +14,7 @@ public class CheckWithCheck extends AbstractAnnotationCheck<CheckWith> {
 
     final static String mes = "validation.invalid";
 
-    Map<String, String> variables = new TreeMap<String, String>();
+    Map<String, String> variables = new TreeMap<>();
     Check check;
 
     @Override
@@ -35,6 +35,7 @@ public class CheckWithCheck extends AbstractAnnotationCheck<CheckWith> {
         return variables;
     }
 
+    @Override
     public boolean isSatisfied(Object validatedObject, Object value, OValContext context, Validator validator) {
         return check.isSatisfied(validatedObject, value);
     }

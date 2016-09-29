@@ -55,7 +55,7 @@ public class HTML {
         if (input == null) {
             return null;
         }
-        StringBuffer escaped = new StringBuffer(input.length() * 2);
+        StringBuilder escaped = new StringBuilder(input.length() * 2);
         for (int i = 0; i < input.length(); i++) {
             char character = input.charAt(i);
             String reference = characterEntityReferences.convertToReference(character);
@@ -77,7 +77,7 @@ public class HTML {
         static final char CHAR_NULL = (char) -1;
         private static final String PROPERTIES_FILE = "htmlentities.properties";
         private final String[] characterToEntityReferenceMap = new String[3000];
-        private final Map<String, Character> entityReferenceToCharacterMap = new HashMap<String, Character>(252);
+        private final Map<String, Character> entityReferenceToCharacterMap = new HashMap<>(252);
 
         /**
          * Returns a new set of character entity references reflecting the HTML 4.0 character set.
@@ -85,7 +85,7 @@ public class HTML {
         public HtmlCharacterEntityReferences() {
             Properties entityReferences = new Properties();
 
-            // Load refeence definition file.
+            // Load reference definition file.
             InputStream is = HtmlCharacterEntityReferences.class.getResourceAsStream(PROPERTIES_FILE);
             if (is == null) {
                 throw new IllegalStateException(
@@ -102,7 +102,7 @@ public class HTML {
                         "Failed to parse reference definition file [HtmlCharacterEntityReferences.properties]: " + ex.getMessage());
             }
 
-            // Parse reference definition properites.
+            // Parse reference definition propertes.
             Enumeration<?> keys = entityReferences.propertyNames();
             while (keys.hasMoreElements()) {
                 String key = (String) keys.nextElement();

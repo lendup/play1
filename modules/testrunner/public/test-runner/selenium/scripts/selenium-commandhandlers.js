@@ -1,18 +1,19 @@
-/*
-* Copyright 2004 ThoughtWorks, Inc
-*
-*  Licensed under the Apache License, Version 2.0 (the "License");
-*  you may not use this file except in compliance with the License.
-*  You may obtain a copy of the License at
-*
-*      http://www.apache.org/licenses/LICENSE-2.0
-*
-*  Unless required by applicable law or agreed to in writing, software
-*  distributed under the License is distributed on an "AS IS" BASIS,
-*  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-*  See the License for the specific language governing permissions and
-*  limitations under the License.
-*/
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // A naming convention used in this file:
 //
@@ -31,7 +32,7 @@
 //     where seleniumApi is the Selenium object, and command a SeleniumCommand object.
 //
 //   - Handlers will return a "result" object (ActionResult, AccessorResult, AssertResult).
-//     ActionResults may contain a .terminationCondition function which is run by 
+//     ActionResults may contain a .terminationCondition function which is run by
 //     -executionloop.js after the command is run; we'll run it over and over again
 //     until it returns true or the .terminationCondition throws an exception.
 //     AccessorResults will contain the results of running getter (e.g. getTitle returns
@@ -187,7 +188,11 @@ objectExtend(CommandHandlerFactory.prototype, {
         // Leaves the message unchanged.
         // Used to create assertNot, verifyNot, and waitForNot commands.
         return function(target, value) {
-            var result = predicateBlock(target, value);
+            try {
+                var result = predicateBlock(target, value);
+            } catch (e) {
+                var result = new PredicateResult(false, e);
+            }
             result.isTrue = !result.isTrue;
             return result;
         };
@@ -246,11 +251,11 @@ objectExtend(CommandHandlerFactory.prototype, {
         // Register a waitForBlahBlah and waitForNotBlahBlah based on the specified accessor.
         var waitForActionMethod = this._waitForActionForPredicate(predicateBlock);
         var waitForActionBlock = fnBind(waitForActionMethod, seleniumApi);
-        
+
         var invertedPredicateBlock = this._invertPredicate(predicateBlock);
         var waitForNotActionMethod = this._waitForActionForPredicate(invertedPredicateBlock);
         var waitForNotActionBlock = fnBind(waitForNotActionMethod, seleniumApi);
-        
+
         this.registerAction("waitFor" + baseName, waitForActionBlock, false, true);
         this.registerAction("waitFor" + this._invertPredicateName(baseName), waitForNotActionBlock, false, true);
         //TODO decide remove "waitForNot.*Present" action name or not
@@ -306,14 +311,14 @@ ActionHandler.prototype.execute = function(seleniumApi, command) {
         // todo: this conditional logic is ugly
         seleniumApi.ensureNoUnhandledPopups();
     }
-    
+
     var handlerCondition = this.actionBlock(command.target, command.value);
-    
+
     // page load waiting takes precedence over any wait condition returned by
     // the action handler.
     var terminationCondition = (this.wait)
         ? seleniumApi.makePageLoadCondition() : handlerCondition;
-    
+
     return new ActionResult(terminationCondition);
 };
 
@@ -332,7 +337,14 @@ AccessorHandler.prototype.execute = function(seleniumApi, command) {
 };
 
 function AccessorResult(result) {
+  if (result.terminationCondition) {
+    var self = this;
+    this.terminationCondition = function() {
+      return result.terminationCondition.call(self);
+    };
+  } else {
     this.result = result;
+  }
 }
 
 /**
@@ -364,14 +376,15 @@ AssertHandler.prototype.execute = function(seleniumApi, command) {
 function AssertResult() {
     this.passed = true;
 }
+
 AssertResult.prototype.setFailed = function(message) {
     this.passed = null;
     this.failed = true;
     this.failureMessage = message;
-}
+};
 
 function SeleniumCommand(command, target, value, isBreakpoint) {
-    this.command = command;
+    this.command = command.trim();
     this.target = target;
     this.value = value;
     this.isBreakpoint = isBreakpoint;

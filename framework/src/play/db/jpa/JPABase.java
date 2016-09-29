@@ -1,19 +1,21 @@
 package play.db.jpa;
 
-import org.hibernate.Session;
-import org.hibernate.type.Type;
-import org.hibernate.type.EntityType;
-import org.hibernate.persister.collection.CollectionPersister;
-import org.hibernate.collection.*;
-import org.hibernate.engine.PersistenceContext;
-import org.hibernate.engine.*;
+import org.hibernate.collection.spi.PersistentCollection;
+import org.hibernate.collection.internal.PersistentMap;
+import org.hibernate.engine.spi.*;
+import org.hibernate.engine.spi.PersistenceContext;
 import org.hibernate.exception.GenericJDBCException;
-import org.hibernate.impl.SessionImpl;
+import org.hibernate.internal.SessionImpl;
+import org.hibernate.persister.collection.CollectionPersister;
 import org.hibernate.proxy.HibernateProxy;
+import org.hibernate.type.EntityType;
+import org.hibernate.type.Type;
+
 import play.PlayPlugin;
 import play.exceptions.UnexpectedException;
 
 import javax.persistence.*;
+
 import java.io.Serializable;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
@@ -26,9 +28,11 @@ import java.util.*;
 @MappedSuperclass
 public class JPABase implements Serializable, play.db.Model {
 
+    @Override
     public void _save() {
-        if (!em().contains(this)) {
-            em().persist(this);
+        String dbName = JPA.getDBName(this.getClass());
+        if (!em(dbName).contains(this)) {
+            em(dbName).persist(this);
             PlayPlugin.postEvent("JPASupport.objectPersisted", this);
         }
         avoidCascadeSaveLoops.set(new HashSet<JPABase>());
@@ -38,7 +42,7 @@ public class JPABase implements Serializable, play.db.Model {
             avoidCascadeSaveLoops.get().clear();
         }
         try {
-            em().flush();
+            em(dbName).flush();
         } catch (PersistenceException e) {
             if (e.getCause() instanceof GenericJDBCException) {
                 throw new PersistenceException(((GenericJDBCException) e.getCause()).getSQL(), e);
@@ -54,7 +58,10 @@ public class JPABase implements Serializable, play.db.Model {
         }
     }
 
+    @Override
     public void _delete() {
+        String dbName = JPA.getDBName(this.getClass());
+         
         try {
             avoidCascadeSaveLoops.set(new HashSet<JPABase>());
             try {
@@ -62,9 +69,9 @@ public class JPABase implements Serializable, play.db.Model {
             } finally {
                 avoidCascadeSaveLoops.get().clear();
             }
-            em().remove(this);
+            em(dbName).remove(this);
             try {
-                em().flush();
+                em(dbName).flush();
             } catch (PersistenceException e) {
                 if (e.getCause() instanceof GenericJDBCException) {
                     throw new PersistenceException(((GenericJDBCException) e.getCause()).getSQL(), e);
@@ -86,13 +93,14 @@ public class JPABase implements Serializable, play.db.Model {
         }
     }
 
+    @Override
     public Object _key() {
         return Model.Manager.factoryFor(this.getClass()).keyValue(this);
     }
 
     // ~~~ SAVING
     public transient boolean willBeSaved = false;
-    static transient ThreadLocal<Set<JPABase>> avoidCascadeSaveLoops = new ThreadLocal<Set<JPABase>>();
+    static transient final ThreadLocal<Set<JPABase>> avoidCascadeSaveLoops = new ThreadLocal<>();
 
     private void saveAndCascade(boolean willBeSaved) {
         this.willBeSaved = willBeSaved;
@@ -106,7 +114,7 @@ public class JPABase implements Serializable, play.db.Model {
         }
         // Cascade save
         try {
-            Set<Field> fields = new HashSet<Field>();
+            Set<Field> fields = new HashSet<>();
             Class clazz = this.getClass();
             while (!clazz.equals(JPABase.class)) {
                 java.util.Collections.addAll(fields, clazz.getDeclaredFields());
@@ -132,40 +140,44 @@ public class JPABase implements Serializable, play.db.Model {
                 }
                 if (doCascade) {
                     Object value = field.get(this);
-                    if (value == null) {
-                        continue;
-                    }
-                    if (value instanceof PersistentMap) {
-                        if (((PersistentMap) value).wasInitialized()) {
+                    if (value != null) {
+                        if (value instanceof PersistentMap) {
+                            if (((PersistentMap) value).wasInitialized()) {
 
-                            cascadeOrphans(this, (PersistentCollection) value, willBeSaved);
+                                cascadeOrphans(this, (PersistentCollection) value, willBeSaved);
 
-                            for (Object o : ((Map) value).values()) {
-                                saveAndCascadeIfJPABase(o, willBeSaved);
+                                for (Object o : ((Map) value).values()) {
+                                    saveAndCascadeIfJPABase(o, willBeSaved);
+                                }
                             }
-                        }
-                        continue;
-                    }
-                    if (value instanceof PersistentCollection) {
-                        if (((PersistentCollection) value).wasInitialized()) {
+                        } else if (value instanceof PersistentCollection) {
+                            PersistentCollection col = (PersistentCollection) value;
+                            if (((PersistentCollection) value).wasInitialized()) {
 
-                            cascadeOrphans(this, (PersistentCollection) value, willBeSaved);
+                                cascadeOrphans(this, (PersistentCollection) value, willBeSaved);
 
+                                for (Object o : (Collection) value) {
+                                    saveAndCascadeIfJPABase(o, willBeSaved);
+                                }
+                            } else {
+                                cascadeOrphans(this, col, willBeSaved);
+
+                                for (Object o : (Collection) value) {
+                                    saveAndCascadeIfJPABase(o, willBeSaved);
+                                }
+                            }
+                        } else if (value instanceof Collection) {
                             for (Object o : (Collection) value) {
                                 saveAndCascadeIfJPABase(o, willBeSaved);
                             }
+                        } else if (value instanceof HibernateProxy && value instanceof JPABase) {
+                            if (!((HibernateProxy) value).getHibernateLazyInitializer().isUninitialized()) {
+                                ((JPABase) ((HibernateProxy) value).getHibernateLazyInitializer().getImplementation())
+                                        .saveAndCascade(willBeSaved);
+                            }
+                        } else if (value instanceof JPABase) {
+                            ((JPABase) value).saveAndCascade(willBeSaved);
                         }
-                        continue;
-                    }
-                    if (value instanceof HibernateProxy && value instanceof JPABase) {
-                        if (!((HibernateProxy) value).getHibernateLazyInitializer().isUninitialized()) {
-                            ((JPABase) ((HibernateProxy) value).getHibernateLazyInitializer().getImplementation()).saveAndCascade(willBeSaved);
-                        }
-                        continue;
-                    }
-                    if (value instanceof JPABase) {
-                        ((JPABase) value).saveAndCascade(willBeSaved);
-                        continue;
                     }
                 }
             }
@@ -174,19 +186,26 @@ public class JPABase implements Serializable, play.db.Model {
         }
     }
 
-    private static void cascadeOrphans(JPABase base, PersistentCollection persistentCollection, boolean willBeSaved) {
-        SessionImpl session = ((SessionImpl) JPA.em().getDelegate());
-        CollectionEntry ce = session.getPersistenceContext().getCollectionEntry(persistentCollection);
+    private void cascadeOrphans(JPABase base, PersistentCollection persistentCollection, boolean willBeSaved) {
+        String dbName = JPA.getDBName(this.getClass());
+        
+        SessionImpl session = ((SessionImpl) JPA.em(dbName).getDelegate());
+        PersistenceContext pc = session.getPersistenceContext();
+        CollectionEntry ce = pc.getCollectionEntry(persistentCollection);
 
         if (ce != null) {
             CollectionPersister cp = ce.getLoadedPersister();
             if (cp != null) {
                 Type ct = cp.getElementType();
                 if (ct instanceof EntityType) {
-                    String entityName = ((EntityType) ct).getAssociatedEntityName(session.getFactory());
-                    Collection orphans = ce.getOrphans(entityName, persistentCollection);
-                    for (Object o : orphans) {
-                        saveAndCascadeIfJPABase(o, willBeSaved);
+                    EntityEntry entry = pc.getEntry(base);
+                    String entityName =  entry.getEntityName();
+                    entityName = ((EntityType) ct).getAssociatedEntityName(session.getFactory());
+                    if (ce.getSnapshot() != null) {
+                        Collection orphans = ce.getOrphans(entityName, persistentCollection);
+                        for (Object o : orphans) {
+                            saveAndCascadeIfJPABase(o, willBeSaved);
+                        }
                     }
                 }
             }
@@ -213,8 +232,16 @@ public class JPABase implements Serializable, play.db.Model {
      *
      * @return the current entityManager
      */
-    public static EntityManager em() {
+    public static EntityManager em(String name) {
+        return JPA.em(name);
+    }
+
+     public static EntityManager em() {
         return JPA.em();
+    }
+
+    public boolean isPersistent(String name) {
+        return JPA.em(name).contains(this);
     }
 
     public boolean isPersistent() {
@@ -222,14 +249,14 @@ public class JPABase implements Serializable, play.db.Model {
     }
 
     /**
-     * JPASupport instances a and b are equals if either <strong>a == b</strong> or a and b have same </strong>{@link #key key} and class</strong>
+     * JPASupport instances a and b are equals if either <strong>a == b</strong> or a and b have same <strong>{@link #_key key} and class</strong>
      *
      * @param other
      * @return true if equality condition above is verified
      */
     @Override
     public boolean equals(Object other) {
-        final Object key = this._key();
+        Object key = this._key();
 
         if (other == null) {
             return false;
@@ -258,7 +285,7 @@ public class JPABase implements Serializable, play.db.Model {
 
     @Override
     public int hashCode() {
-        final Object key = this._key();
+        Object key = this._key();
         if (key == null) {
             return 0;
         }
@@ -270,7 +297,7 @@ public class JPABase implements Serializable, play.db.Model {
 
     @Override
     public String toString() {
-        final Object key = this._key();
+        Object key = this._key();
         String keyStr = "";
         if (key != null && key.getClass().isArray()) {
             for (Object object : (Object[]) key) {

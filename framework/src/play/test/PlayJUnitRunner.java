@@ -1,7 +1,6 @@
 package play.test;
 
 import java.io.File;
-
 import org.apache.commons.lang.exception.ExceptionUtils;
 import org.junit.rules.MethodRule;
 import org.junit.runner.Description;
@@ -14,6 +13,7 @@ import org.junit.runners.JUnit4;
 import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.Statement;
+import org.junit.runners.model.TestClass;
 
 import play.Invoker;
 import play.Invoker.DirectInvocation;
@@ -24,7 +24,7 @@ public class PlayJUnitRunner extends Runner implements Filterable {
     public static final String invocationType = "JUnitTest";
 
     public static boolean useCustomRunner = false;
-    
+
     // *******************
     JUnit4 jUnit4;
 
@@ -33,11 +33,13 @@ public class PlayJUnitRunner extends Runner implements Filterable {
             if (!Play.started) {
                 Play.init(new File("."), PlayJUnitRunner.getPlayId());
                 Play.javaPath.add(Play.getVirtualFile("test"));
-                Play.start();
+                // Assure that Play is not start (start can be called in the Play.init method)
+                if (!Play.started) {
+                    Play.start();
+                }
                 useCustomRunner = true;
-                Class classToRun = Play.classloader.loadApplicationClass(testClass.getName());
             }
-            Class classToRun = Play.classloader.loadApplicationClass(testClass.getName());
+            Class<?> classToRun = Play.classloader.loadApplicationClass(testClass.getName());
             jUnit4 = new JUnit4(classToRun);
         }
     }
@@ -55,17 +57,23 @@ public class PlayJUnitRunner extends Runner implements Filterable {
         return jUnit4.getDescription();
     }
 
-   
+    private void initTest() {
+        TestClass testClass = jUnit4.getTestClass();
+        if(testClass != null){
+            TestEngine.initTest(testClass.getJavaClass());
+        }
+    }
+
     @Override
-    public void run(final RunNotifier notifier) {
-        TestEngine.initTest();
+    public void run(RunNotifier notifier) {
+        initTest();
         jUnit4.run(notifier);
     }
-    
+
     @Override
     public void filter(Filter toFilter) throws NoTestsRemainException {
-    	jUnit4.filter(toFilter);
-    	
+        jUnit4.filter(toFilter);
+
     }
 
     // *********************
@@ -73,6 +81,7 @@ public class PlayJUnitRunner extends Runner implements Filterable {
 
         INVOKE_THE_TEST_IN_PLAY_CONTEXT {
 
+            @Override
             public Statement apply(final Statement base, FrameworkMethod method, Object target) {
 
                 return new Statement() {
@@ -110,6 +119,7 @@ public class PlayJUnitRunner extends Runner implements Filterable {
         },
         JUST_RUN_THE_TEST {
 
+            @Override
             public Statement apply(final Statement base, FrameworkMethod method, Object target) {
                 return new Statement() {
 

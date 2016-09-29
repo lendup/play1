@@ -5,7 +5,7 @@ import play.data.binding.NoBinding;
 
 import java.lang.annotation.Annotation;
 
-class BindingAnnotations {
+public class BindingAnnotations {
     public final Annotation[] annotations;
     private String[] profiles = null;
     private String[] noBindingProfiles = null;
@@ -69,8 +69,8 @@ class BindingAnnotations {
 
     public boolean checkNoBinding() {
 
-        final String[] _profiles = getProfiles();
-        final String[] _noBindingProfiles = getNoBindingProfiles();
+        String[] _profiles = getProfiles();
+        String[] _noBindingProfiles = getNoBindingProfiles();
 
         if (_noBindingProfiles.length>0) {
             for (String l : _noBindingProfiles) {

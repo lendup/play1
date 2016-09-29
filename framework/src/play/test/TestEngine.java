@@ -5,6 +5,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -31,6 +32,7 @@ import play.vfs.VirtualFile;
 public class TestEngine {
 
     private final static class ClassNameComparator implements Comparator<Class> {
+        @Override
         public int compare(Class aClass, Class bClass) {
             return aClass.getName().compareTo(bClass.getName());
         }
@@ -41,7 +43,9 @@ public class TestEngine {
     public static ExecutorService functionalTestsExecutor = Executors.newSingleThreadExecutor();
 
     public static List<Class> allUnitTests() {
-        List<Class> classes = Play.classloader.getAssignableClasses(Assert.class);
+        List<Class> classes = new ArrayList<>();
+        classes.addAll(Play.classloader.getAssignableClasses(Assert.class));
+        classes.addAll(Play.pluginCollection.getUnitTests());
         for (ListIterator<Class> it = classes.listIterator(); it.hasNext();) {
             Class c = it.next();
             if (Modifier.isAbstract(c.getModifiers())) {
@@ -57,7 +61,10 @@ public class TestEngine {
     }
 
     public static List<Class> allFunctionalTests() {
-        List<Class> classes = Play.classloader.getAssignableClasses(FunctionalTest.class);
+        List<Class> classes = new ArrayList<>();
+        classes.addAll(Play.classloader.getAssignableClasses(FunctionalTest.class));
+        classes.addAll(Play.pluginCollection.getFunctionalTests());
+        
         for (ListIterator<Class> it = classes.listIterator(); it.hasNext();) {
             if (Modifier.isAbstract(it.next().getModifiers())) {
                 it.remove();
@@ -76,7 +83,7 @@ public class TestEngine {
     }
 
     public static List<String> allSeleniumTests() {
-        List<String> results = new ArrayList<String>();
+        List<String> results = new ArrayList<>();
         seleniumTests("test", results);
         for (VirtualFile root : Play.roots) {
             seleniumTests(root.relativePath() + "/test", results);
@@ -96,6 +103,68 @@ public class TestEngine {
                     f = f.getParentFile();
                 }
                 tests.add(test);
+            }
+        }
+    }
+    
+    public static void initTest(Class<?> testClass) { 
+        CleanTest cleanTestAnnot = null;
+        if(testClass != null ){
+            cleanTestAnnot = testClass.getAnnotation(CleanTest.class) ;
+        }
+        if(cleanTestAnnot != null && cleanTestAnnot.removeCurrent() == true){
+            if(Request.current != null){
+                Request.current.remove();
+            }
+            if(Response.current != null){
+                Response.current.remove();
+            }
+            if(RenderArgs.current != null){
+                RenderArgs.current.remove();
+            }
+        }
+        if (cleanTestAnnot == null || (cleanTestAnnot != null && cleanTestAnnot.createDefault() == true)) {
+            if (Request.current() == null) {
+                // Use base URL to create a request for this host
+                // host => with port
+                // domain => without port
+                String host = Router.getBaseUrl();
+                String domain = null;
+                Integer port = 80;
+                boolean isSecure = false;
+                if (host == null || host.equals("application.baseUrl")) {
+                    host = "localhost:" + port;
+                    domain = "localhost";
+                } else if (host.contains("http://")) {
+                    host = host.replaceAll("http://", "");
+                } else if (host.contains("https://")) {
+                    host = host.replaceAll("https://", "");
+                    port = 443;
+                    isSecure = true;         
+                }
+                int colonPos =  host.indexOf(':');
+                if(colonPos > -1){
+                    domain = host.substring(0, colonPos);
+                    port = Integer.parseInt(host.substring(colonPos+1));
+                }else{
+                   domain = host;
+                }
+                Request request = Request.createRequest(null, "GET", "/", "", null,
+                        null, null, host, false, port, domain, isSecure, null, null);
+                request.body = new ByteArrayInputStream(new byte[0]);
+                Request.current.set(request);
+            }
+
+            if (Response.current() == null) {
+                Response response = new Response();
+                response.out = new ByteArrayOutputStream();
+                response.direct = null;
+                Response.current.set(response);
+            }
+
+            if (RenderArgs.current() == null) {
+                RenderArgs renderArgs = new RenderArgs();
+                RenderArgs.current.set(renderArgs);
             }
         }
     }
@@ -148,14 +217,14 @@ public class TestEngine {
     }
     
     @SuppressWarnings("unchecked")
-    public static TestResults run(final String name) {
-        final TestResults testResults = new TestResults();
+    public static TestResults run(String name) {
+        TestResults testResults = new TestResults();
 
         try {
             // Load test class
-            final Class testClass = Play.classloader.loadClass(name);
-
-            initTest();
+            Class testClass = Play.classloader.loadClass(name);
+                 
+            initTest(testClass);
             
             TestResults pluginTestResults = Play.pluginCollection.runTest(testClass);
             if (pluginTestResults != null) {
@@ -230,7 +299,7 @@ public class TestEngine {
 
     public static class TestResults {
 
-        public List<TestResult> results = new ArrayList<TestResult>();
+        public List<TestResult> results = new ArrayList<>();
         public boolean passed = true;
         public int success = 0;
         public int errors = 0;

@@ -1,19 +1,19 @@
-/*
- * Copyright 2004 ThoughtWorks, Inc
- *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
- *  You may obtain a copy of the License at
- *
- *      http://www.apache.org/licenses/LICENSE-2.0
- *
- *  Unless required by applicable law or agreed to in writing, software
- *  distributed under the License is distributed on an "AS IS" BASIS,
- *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- *  See the License for the specific language governing permissions and
- *  limitations under the License.
- *
- */
+// Licensed to the Software Freedom Conservancy (SFC) under one
+// or more contributor license agreements.  See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership.  The SFC licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License.  You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing,
+// software distributed under the License is distributed on an
+// "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+// KIND, either express or implied.  See the License for the
+// specific language governing permissions and limitations
+// under the License.
 
 // Although it's generally better web development practice not to use
 // browser-detection (feature detection is better), the subtle browser
@@ -32,12 +32,6 @@ var BrowserVersion = function() {
         this.isVista = true;
     }
 
-    if (window.opera != null) {
-        this.browser = BrowserVersion.OPERA;
-        this.isOpera = true;
-        return;
-    }
-    
     var _getQueryParameter = function(searchKey) {
         var str = location.search.substr(1);
         if (str == null) return null;
@@ -51,9 +45,9 @@ var BrowserVersion = function() {
         }
         return null;
     };
-    
+
     var self = this;
-    
+
     var checkChrome = function() {
         var loc = window.document.location.href;
         try {
@@ -72,11 +66,11 @@ var BrowserVersion = function() {
                 self.isChrome = false;
             }
         }
-        
-        
-    }
-    
-    
+
+
+    };
+
+
 
     if (this.name == "Microsoft Internet Explorer") {
         this.browser = BrowserVersion.IE;
@@ -105,6 +99,16 @@ var BrowserVersion = function() {
         return;
     }
 
+    // google chrome has both 'safari' and 'gecko' in the user agent so
+    // it has to go before them - see http://www.google.com/chrome/intl/en/webmasters-faq.html#useragent
+    if (navigator.userAgent.indexOf('Chrome/') != -1) {
+        this.browser = BrowserVersion.GOOGLECHROME;
+        this.isGoogleChrome = true;
+        this.isGecko = true;
+        this.khtml = true;
+        return;
+    }
+
     if (navigator.userAgent.indexOf('Safari') != -1) {
         this.browser = BrowserVersion.SAFARI;
         this.isSafari = true;
@@ -119,11 +123,13 @@ var BrowserVersion = function() {
         return;
     }
 
-    if (navigator.userAgent.indexOf('Firefox') != -1) {
+    if (navigator.userAgent.indexOf('Firefox') != -1 ||
+	navigator.userAgent.indexOf('Namoroka') != -1 ||
+	navigator.userAgent.indexOf('Shiretoko') != -1) {
         this.browser = BrowserVersion.FIREFOX;
         this.isFirefox = true;
         this.isGecko = true;
-        var result = /.*Firefox\/([\d\.]+).*/.exec(navigator.userAgent);
+        var result = /.*[Firefox|Namoroka|Shiretoko]\/([\d\.]+).*/.exec(navigator.userAgent);
         if (result) {
             this.firefoxVersion = result[1];
         }
@@ -140,14 +146,14 @@ var BrowserVersion = function() {
     }
 
     this.browser = BrowserVersion.UNKNOWN;
-}
+};
 
-BrowserVersion.OPERA = "Opera";
 BrowserVersion.IE = "IE";
 BrowserVersion.KONQUEROR = "Konqueror";
 BrowserVersion.SAFARI = "Safari";
 BrowserVersion.FIREFOX = "Firefox";
 BrowserVersion.MOZILLA = "Mozilla";
+BrowserVersion.GOOGLECHROME = "Google Chrome";
 BrowserVersion.UNKNOWN = "Unknown";
 
 var browserVersion = new BrowserVersion();

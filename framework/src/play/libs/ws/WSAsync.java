@@ -1,23 +1,19 @@
 package play.libs.ws;
 
-import java.io.*;
-import java.net.URLDecoder;
-import java.net.URLEncoder;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-
 import com.ning.http.client.*;
+import com.ning.http.client.AsyncHttpClient.BoundRequestBuilder;
+import com.ning.http.client.AsyncHttpClientConfig.Builder;
+import com.ning.http.client.Realm.AuthScheme;
+import com.ning.http.client.Realm.RealmBuilder;
+import com.ning.http.client.multipart.ByteArrayPart;
+import com.ning.http.client.multipart.FilePart;
+import com.ning.http.client.multipart.Part;
 import oauth.signpost.AbstractOAuthConsumer;
 import oauth.signpost.exception.OAuthCommunicationException;
 import oauth.signpost.exception.OAuthExpectationFailedException;
 import oauth.signpost.exception.OAuthMessageSignerException;
 import oauth.signpost.http.HttpRequest;
-
 import org.apache.commons.lang.NotImplementedException;
-
 import play.Logger;
 import play.Play;
 import play.libs.F.Promise;
@@ -28,38 +24,42 @@ import play.libs.WS.WSImpl;
 import play.libs.WS.WSRequest;
 import play.mvc.Http.Header;
 
-import com.ning.http.client.AsyncHttpClient.BoundRequestBuilder;
-import com.ning.http.client.AsyncHttpClientConfig.Builder;
-import com.ning.http.client.FilePart;
-import com.ning.http.client.PerRequestConfig;
-import com.ning.http.client.ProxyServer;
-import com.ning.http.client.Realm.AuthScheme;
-import com.ning.http.client.Realm.RealmBuilder;
-import com.ning.http.client.Response;
+import javax.net.ssl.SSLContext;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.UnsupportedEncodingException;
+import java.net.URLDecoder;
+import java.net.URLEncoder;
+import java.nio.charset.Charset;
+import java.util.*;
 
 /**
  * Simple HTTP client to make webservices requests.
  * 
- * <p/>
+ * <p>
  * Get latest BBC World news as a RSS content
+ * 
  * <pre>
- *    HttpResponse response = WS.url("http://newsrss.bbc.co.uk/rss/newsonline_world_edition/front_page/rss.xml").get();
- *    Document xmldoc = response.getXml();
- *    // the real pain begins here...
+ * HttpResponse response = WS.url("http://newsrss.bbc.co.uk/rss/newsonline_world_edition/front_page/rss.xml").get();
+ * Document xmldoc = response.getXml();
+ * // the real pain begins here...
  * </pre>
- * <p/>
+ * <p>
  * 
  * Search what Yahoo! thinks of google (starting from the 30th result).
+ * 
  * <pre>
- *    HttpResponse response = WS.url("http://search.yahoo.com/search?p=<em>%s</em>&pstart=1&b=<em>%s</em>", "Google killed me", "30").get();
- *    if( response.getStatus() == 200 ) {
- *       html = response.getString();
- *    }
+ * HttpResponse response = WS.url("http://search.yahoo.com/search?p=<em>%s</em>&amp;pstart=1&amp;b=<em>%s</em>", "Google killed me", "30").get();
+ * if (response.getStatus() == 200) {
+ *     html = response.getString();
+ * }
  * </pre>
  */
 public class WSAsync implements WSImpl {
 
     private AsyncHttpClient httpClient;
+    private static SSLContext sslCTX = null;
 
     public WSAsync() {
         String proxyHost = Play.configuration.getProperty("http.proxyHost", System.getProperty("http.proxyHost"));
@@ -68,6 +68,9 @@ public class WSAsync implements WSImpl {
         String proxyPassword = Play.configuration.getProperty("http.proxyPassword", System.getProperty("http.proxyPassword"));
         String nonProxyHosts = Play.configuration.getProperty("http.nonProxyHosts", System.getProperty("http.nonProxyHosts"));
         String userAgent = Play.configuration.getProperty("http.userAgent");
+        String keyStore = Play.configuration.getProperty("ssl.keyStore", System.getProperty("javax.net.ssl.keyStore"));
+        String keyStorePass = Play.configuration.getProperty("ssl.keyStorePassword", System.getProperty("javax.net.ssl.keyStorePassword"));
+        Boolean CAValidation = Boolean.parseBoolean(Play.configuration.getProperty("ssl.cavalidation", "true"));
 
         Builder confBuilder = new AsyncHttpClientConfig.Builder();
         if (proxyHost != null) {
@@ -75,12 +78,14 @@ public class WSAsync implements WSImpl {
             try {
                 proxyPortInt = Integer.parseInt(proxyPort);
             } catch (NumberFormatException e) {
-                Logger.error("Cannot parse the proxy port property '%s'. Check property http.proxyPort either in System configuration or in Play config file.", proxyPort);
+                Logger.error(e, 
+                        "Cannot parse the proxy port property '%s'. Check property http.proxyPort either in System configuration or in Play config file.",
+                        proxyPort);
                 throw new IllegalStateException("WS proxy is misconfigured -- check the logs for details");
             }
             ProxyServer proxy = new ProxyServer(proxyHost, proxyPortInt, proxyUser, proxyPassword);
             if (nonProxyHosts != null) {
-                final String[] strings = nonProxyHosts.split("\\|");
+                String[] strings = nonProxyHosts.split("\\|");
                 for (String uril : strings) {
                     proxy.addNonProxyHost(uril);
                 }
@@ -90,17 +95,33 @@ public class WSAsync implements WSImpl {
         if (userAgent != null) {
             confBuilder.setUserAgent(userAgent);
         }
+
+        if (keyStore != null && !keyStore.equals("")) {
+
+            Logger.info("Keystore configured, loading from '%s', CA validation enabled : %s", keyStore, CAValidation);
+            if (Logger.isTraceEnabled()) {
+                Logger.trace("Keystore password : %s, SSLCTX : %s", keyStorePass, sslCTX);
+            }
+
+            if (sslCTX == null) {
+                sslCTX = WSSSLContext.getSslContext(keyStore, keyStorePass, CAValidation);
+                confBuilder.setSSLContext(sslCTX);
+            }
+        }
         // when using raw urls, AHC does not encode the params in url.
-        // this means we can/must encode it(with correct encoding) before passing it to AHC
-        confBuilder.setUseRawUrl(true);
+        // this means we can/must encode it(with correct encoding) before
+        // passing it to AHC
+        confBuilder.setDisableUrlEncodingForBoundedRequests(true);
         httpClient = new AsyncHttpClient(confBuilder.build());
     }
 
+    @Override
     public void stop() {
         Logger.trace("Releasing http client connections...");
         httpClient.close();
     }
 
+    @Override
     public WSRequest newRequest(String url, String encoding) {
         return new WSAsyncRequest(url, encoding);
     }
@@ -110,19 +131,18 @@ public class WSAsync implements WSImpl {
         protected String type = null;
         private String generatedContentType = null;
 
-
         protected WSAsyncRequest(String url, String encoding) {
             super(url, encoding);
         }
 
         /**
-         * Returns the url but removed the queryString-part of it
-         * The QueryString-info is later added with addQueryString()
+         * Returns the url but removed the queryString-part of it The
+         * QueryString-info is later added with addQueryString()
          */
         protected String getUrlWithoutQueryString() {
             int i = url.indexOf('?');
-            if ( i > 0) {
-                return url.substring(0,i);
+            if (i > 0) {
+                return url.substring(0, i);
             } else {
                 return url;
             }
@@ -133,52 +153,58 @@ public class WSAsync implements WSImpl {
          */
         protected void addQueryString(BoundRequestBuilder requestBuilder) {
 
-            // AsyncHttpClient is by default encoding everything in utf-8 so for us to be able to use
-            // different encoding we have configured AHC to use raw urls. When using raw urls,
-            // AHC does not encode url and QueryParam with utf-8 - but there is another problem:
-            // If we send raw (none-encoded) url (with queryString) to AHC, it does not url-encode it,
+            // AsyncHttpClient is by default encoding everything in utf-8 so for
+            // us to be able to use
+            // different encoding we have configured AHC to use raw urls. When
+            // using raw urls,
+            // AHC does not encode url and QueryParam with utf-8 - but there is
+            // another problem:
+            // If we send raw (none-encoded) url (with queryString) to AHC, it
+            // does not url-encode it,
             // but transform all illegal chars to '?'.
-            // If we pre-encoded the url with QueryString before sending it to AHC, ahc will decode it, and then
+            // If we pre-encoded the url with QueryString before sending it to
+            // AHC, ahc will decode it, and then
             // later break it with '?'.
 
-            // This method basically does the same as RequestBuilderBase.buildUrl() except from destroying the
+            // This method basically does the same as
+            // RequestBuilderBase.buildUrl() except from destroying the
             // pre-encoding
 
             // does url contain query_string?
             int i = url.indexOf('?');
-            if ( i > 0) {
+            if (i > 0) {
 
                 try {
                     // extract query-string-part
-                    String queryPart = url.substring(i+1);
+                    String queryPart = url.substring(i + 1);
 
-                    // parse queryPart - and decode it... (it is going to be re-encoded later)
-                    for( String param : queryPart.split("&")) {
+                    // parse queryPart - and decode it... (it is going to be
+                    // re-encoded later)
+                    for (String param : queryPart.split("&")) {
 
                         i = param.indexOf('=');
                         String name;
                         String value = null;
-                        if ( i<=0) {
+                        if (i <= 0) {
                             // only a flag
                             name = URLDecoder.decode(param, encoding);
                         } else {
-                            name = URLDecoder.decode(param.substring(0,i), encoding);
-                            value = URLDecoder.decode(param.substring(i+1), encoding);
+                            name = URLDecoder.decode(param.substring(0, i), encoding);
+                            value = URLDecoder.decode(param.substring(i + 1), encoding);
                         }
 
                         if (value == null) {
-                            requestBuilder.addQueryParameter(URLEncoder.encode(name, encoding), null);
+                            requestBuilder.addQueryParam(URLEncoder.encode(name, encoding), null);
                         } else {
-                            requestBuilder.addQueryParameter(URLEncoder.encode(name, encoding), URLEncoder.encode(value, encoding));
+                            requestBuilder.addQueryParam(URLEncoder.encode(name, encoding), URLEncoder.encode(value, encoding));
                         }
 
                     }
                 } catch (UnsupportedEncodingException e) {
-                    throw new RuntimeException("Error parsing query-part of url",e);
+                    throw new RuntimeException("Error parsing query-part of url", e);
                 }
             }
         }
-
 
         private BoundRequestBuilder prepareAll(BoundRequestBuilder requestBuilder) {
             checkFileBody(requestBuilder);
@@ -186,7 +212,6 @@ public class WSAsync implements WSImpl {
             addGeneratedContentType(requestBuilder);
             return requestBuilder;
         }
-
 
         public BoundRequestBuilder prepareGet() {
             return prepareAll(httpClient.prepareGet(getUrlWithoutQueryString()));
@@ -198,6 +223,10 @@ public class WSAsync implements WSImpl {
 
         public BoundRequestBuilder prepareHead() {
             return prepareAll(httpClient.prepareHead(getUrlWithoutQueryString()));
+        }
+
+        public BoundRequestBuilder preparePatch() {
+            return prepareAll(httpClient.preparePatch(getUrlWithoutQueryString()));
         }
 
         public BoundRequestBuilder preparePost() {
@@ -232,8 +261,25 @@ public class WSAsync implements WSImpl {
             return execute(prepareGet());
         }
 
-
-        /** Execute a POST request.*/
+        /** Execute a PATCH request.*/
+        @Override
+        public HttpResponse patch() {
+            this.type = "PATCH";
+            sign();
+            try {
+                return new HttpAsyncResponse(prepare(preparePatch()).execute().get());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        /** Execute a PATCH request asynchronously.*/
+        @Override
+        public Promise<HttpResponse> patchAsync() {
+            this.type = "PATCH";
+            sign();
+            return execute(preparePatch());
+        }
+        /** Execute a POST request. */
         @Override
         public HttpResponse post() {
             this.type = "POST";
@@ -245,7 +291,7 @@ public class WSAsync implements WSImpl {
             }
         }
 
-        /** Execute a POST request asynchronously.*/
+        /** Execute a POST request asynchronously. */
         @Override
         public Promise<HttpResponse> postAsync() {
             this.type = "POST";
@@ -253,7 +299,7 @@ public class WSAsync implements WSImpl {
             return execute(preparePost());
         }
 
-        /** Execute a PUT request.*/
+        /** Execute a PUT request. */
         @Override
         public HttpResponse put() {
             this.type = "PUT";
@@ -264,14 +310,14 @@ public class WSAsync implements WSImpl {
             }
         }
 
-        /** Execute a PUT request asynchronously.*/
+        /** Execute a PUT request asynchronously. */
         @Override
         public Promise<HttpResponse> putAsync() {
             this.type = "PUT";
             return execute(preparePut());
         }
 
-        /** Execute a DELETE request.*/
+        /** Execute a DELETE request. */
         @Override
         public HttpResponse delete() {
             this.type = "DELETE";
@@ -282,14 +328,14 @@ public class WSAsync implements WSImpl {
             }
         }
 
-        /** Execute a DELETE request asynchronously.*/
+        /** Execute a DELETE request asynchronously. */
         @Override
         public Promise<HttpResponse> deleteAsync() {
             this.type = "DELETE";
             return execute(prepareDelete());
         }
 
-        /** Execute a OPTIONS request.*/
+        /** Execute a OPTIONS request. */
         @Override
         public HttpResponse options() {
             this.type = "OPTIONS";
@@ -300,14 +346,14 @@ public class WSAsync implements WSImpl {
             }
         }
 
-        /** Execute a OPTIONS request asynchronously.*/
+        /** Execute a OPTIONS request asynchronously. */
         @Override
         public Promise<HttpResponse> optionsAsync() {
             this.type = "OPTIONS";
             return execute(prepareOptions());
         }
 
-        /** Execute a HEAD request.*/
+        /** Execute a HEAD request. */
         @Override
         public HttpResponse head() {
             this.type = "HEAD";
@@ -318,21 +364,21 @@ public class WSAsync implements WSImpl {
             }
         }
 
-        /** Execute a HEAD request asynchronously.*/
+        /** Execute a HEAD request asynchronously. */
         @Override
         public Promise<HttpResponse> headAsync() {
             this.type = "HEAD";
             return execute(prepareHead());
         }
 
-        /** Execute a TRACE request.*/
+        /** Execute a TRACE request. */
         @Override
         public HttpResponse trace() {
             this.type = "TRACE";
             throw new NotImplementedException();
         }
 
-        /** Execute a TRACE request asynchronously.*/
+        /** Execute a TRACE request asynchronously. */
         @Override
         public Promise<HttpResponse> traceAsync() {
             this.type = "TRACE";
@@ -355,38 +401,41 @@ public class WSAsync implements WSImpl {
             if (this.username != null && this.password != null && this.scheme != null) {
                 AuthScheme authScheme;
                 switch (this.scheme) {
-                case DIGEST: authScheme = AuthScheme.DIGEST; break;
-                case NTLM: authScheme = AuthScheme.NTLM; break;
-                case KERBEROS: authScheme = AuthScheme.KERBEROS; break;
-                case SPNEGO: authScheme = AuthScheme.SPNEGO; break;
-                case BASIC: authScheme = AuthScheme.BASIC; break;
-                default: throw new RuntimeException("Scheme " + this.scheme + " not supported by the UrlFetch WS backend.");
+                case DIGEST:
+                    authScheme = AuthScheme.DIGEST;
+                    break;
+                case NTLM:
+                    authScheme = AuthScheme.NTLM;
+                    break;
+                case KERBEROS:
+                    authScheme = AuthScheme.KERBEROS;
+                    break;
+                case SPNEGO:
+                    authScheme = AuthScheme.SPNEGO;
+                    break;
+                case BASIC:
+                    authScheme = AuthScheme.BASIC;
+                    break;
+                default:
+                    throw new RuntimeException("Scheme " + this.scheme + " not supported by the UrlFetch WS backend.");
                 }
-                builder.setRealm(
-                        (new RealmBuilder())
-                        .setScheme(authScheme)
-                        .setPrincipal(this.username)
-                        .setPassword(this.password)
-                        .setUsePreemptiveAuth(true)
-                        .build()
-                );
+                builder.setRealm((new RealmBuilder()).setScheme(authScheme).setPrincipal(this.username).setPassword(this.password)
+                        .setUsePreemptiveAuth(true).build());
             }
-            for (String key: this.headers.keySet()) {
+            for (String key : this.headers.keySet()) {
                 builder.addHeader(key, headers.get(key));
             }
+            builder.setFollowRedirects(this.followRedirects);
+            builder.setRequestTimeout(this.timeout * 1000);
             if (this.virtualHost != null) {
                 builder.setVirtualHost(this.virtualHost);
             }
-            builder.setFollowRedirects(this.followRedirects);
-            PerRequestConfig perRequestConfig = new PerRequestConfig();
-            perRequestConfig.setRequestTimeoutInMs(this.timeout * 1000);
-            builder.setPerRequestConfig(perRequestConfig);
             return builder;
         }
 
         private Promise<HttpResponse> execute(BoundRequestBuilder builder) {
             try {
-                final Promise<HttpResponse> smartFuture = new Promise<HttpResponse>();
+                final Promise<HttpResponse> smartFuture = new Promise<>();
                 prepare(builder).execute(new AsyncCompletionHandler<HttpResponse>() {
                     @Override
                     public HttpResponse onCompleted(Response response) throws Exception {
@@ -394,9 +443,11 @@ public class WSAsync implements WSImpl {
                         smartFuture.invoke(httpResponse);
                         return httpResponse;
                     }
+
                     @Override
                     public void onThrowable(Throwable t) {
-                        // An error happened - must "forward" the exception to the one waiting for the result
+                        // An error happened - must "forward" the exception to
+                        // the one waiting for the result
                         smartFuture.invokeWithException(t);
                     }
                 });
@@ -410,12 +461,10 @@ public class WSAsync implements WSImpl {
         private void checkFileBody(BoundRequestBuilder builder) {
             setResolvedContentType(null);
             if (this.fileParams != null) {
-                //could be optimized, we know the size of this array.
+                // could be optimized, we know the size of this array.
                 for (int i = 0; i < this.fileParams.length; i++) {
-                    builder.addBodyPart(new FilePart(this.fileParams[i].paramName,
-                            this.fileParams[i].file,
-                            MimeTypes.getMimeType(this.fileParams[i].file.getName()),
-                            encoding));
+                    builder.addBodyPart(new FilePart(this.fileParams[i].paramName, this.fileParams[i].file,
+                            MimeTypes.getMimeType(this.fileParams[i].file.getName()), Charset.forName(encoding)));
                 }
                 if (this.parameters != null) {
                     try {
@@ -425,38 +474,43 @@ public class WSAsync implements WSImpl {
                             if (value instanceof Collection<?> || value.getClass().isArray()) {
                                 Collection<?> values = value.getClass().isArray() ? Arrays.asList((Object[]) value) : (Collection<?>) value;
                                 for (Object v : values) {
-                                    Part part = new ByteArrayPart(key, null, v.toString().getBytes(encoding), "text/plain", encoding);
-                                    builder.addBodyPart( part );
+                                    Part part = new ByteArrayPart(key, v.toString().getBytes(encoding), "text/plain",
+                                            Charset.forName(encoding), null);
+                                    builder.addBodyPart(part);
                                 }
                             } else {
-                                Part part = new ByteArrayPart(key, null, value.toString().getBytes(encoding), "text/plain", encoding);
-                                builder.addBodyPart( part );
+                                Part part = new ByteArrayPart(key, value.toString().getBytes(encoding), "text/plain",
+                                        Charset.forName(encoding), null);
+                                builder.addBodyPart(part);
                             }
                         }
-                    } catch(UnsupportedEncodingException e) {
+                    } catch (UnsupportedEncodingException e) {
                         throw new RuntimeException(e);
                     }
                 }
 
-                // Don't have to set content-type: AHC will automatically choose multipart
-                
+                // Don't have to set content-type: AHC will automatically choose
+                // multipart
+
                 return;
             }
             if (this.parameters != null && !this.parameters.isEmpty()) {
                 boolean isPostPut = "POST".equals(this.type) || ("PUT".equals(this.type));
 
                 if (isPostPut) {
-                    // Since AHC is hard-coded to encode to use UTF-8, we must build
+                    // Since AHC is hard-coded to encode to use UTF-8, we must
+                    // build
                     // the content ourself..
                     StringBuilder sb = new StringBuilder();
 
                     for (String key : this.parameters.keySet()) {
                         Object value = this.parameters.get(key);
-                        if (value == null) continue;
+                        if (value == null)
+                            continue;
 
                         if (value instanceof Collection<?> || value.getClass().isArray()) {
                             Collection<?> values = value.getClass().isArray() ? Arrays.asList((Object[]) value) : (Collection<?>) value;
-                            for (Object v: values) {
+                            for (Object v : values) {
                                 if (sb.length() > 0) {
                                     sb.append('&');
                                 }
@@ -465,7 +519,8 @@ public class WSAsync implements WSImpl {
                                 sb.append(encode(v.toString()));
                             }
                         } else {
-                            // Since AHC is hard-coded to encode using UTF-8, we must build
+                            // Since AHC is hard-coded to encode using UTF-8, we
+                            // must build
                             // the content ourself..
                             if (sb.length() > 0) {
                                 sb.append('&');
@@ -476,10 +531,9 @@ public class WSAsync implements WSImpl {
                         }
                     }
                     try {
-                        byte[] bodyBytes = sb.toString().getBytes( this.encoding );
-                        InputStream bodyInStream = new ByteArrayInputStream( bodyBytes );
-                        builder.setBody( bodyInStream );
-                    } catch ( UnsupportedEncodingException e) {
+                        byte[] bodyBytes = sb.toString().getBytes(this.encoding);
+                        builder.setBody(bodyBytes);
+                    } catch (UnsupportedEncodingException e) {
                         throw new RuntimeException(e);
                     }
 
@@ -488,16 +542,17 @@ public class WSAsync implements WSImpl {
                 } else {
                     for (String key : this.parameters.keySet()) {
                         Object value = this.parameters.get(key);
-                        if (value == null) continue;
+                        if (value == null)
+                            continue;
                         if (value instanceof Collection<?> || value.getClass().isArray()) {
                             Collection<?> values = value.getClass().isArray() ? Arrays.asList((Object[]) value) : (Collection<?>) value;
-                            for (Object v: values) {
+                            for (Object v : values) {
                                 // must encode it since AHC uses raw urls
-                                builder.addQueryParameter(encode(key), encode(v.toString()));
+                                builder.addQueryParam(encode(key), encode(v.toString()));
                             }
                         } else {
                             // must encode it since AHC uses raw urls
-                            builder.addQueryParameter(encode(key), encode(value.toString()));
+                            builder.addQueryParam(encode(key), encode(value.toString()));
                         }
                     }
                     setResolvedContentType("text/html; charset=" + encoding);
@@ -507,42 +562,42 @@ public class WSAsync implements WSImpl {
                 if (this.parameters != null && !this.parameters.isEmpty()) {
                     throw new RuntimeException("POST or PUT method with parameters AND body are not supported.");
                 }
-                if(this.body instanceof InputStream) {
-                    builder.setBody((InputStream)this.body);
+                if (this.body instanceof InputStream) {
+                    builder.setBody((InputStream) this.body);
                 } else {
                     try {
-                        byte[] bodyBytes = this.body.toString().getBytes( this.encoding );
-                        InputStream bodyInStream = new ByteArrayInputStream( bodyBytes );
-                        builder.setBody( bodyInStream );
-                    } catch ( UnsupportedEncodingException e) {
+                        byte[] bodyBytes = this.body.toString().getBytes(this.encoding);
+                        builder.setBody(bodyBytes);
+                    } catch (UnsupportedEncodingException e) {
                         throw new RuntimeException(e);
                     }
                 }
                 setResolvedContentType("text/html; charset=" + encoding);
             }
-            
-            if(this.mimeType != null) {
+
+            if (this.mimeType != null) {
                 // User has specified mimeType
                 this.headers.put("Content-Type", this.mimeType);
             }
         }
 
         /**
-         * Sets the resolved Content-type - This is added as Content-type-header to AHC
-         * if ser has not specified Content-type or mimeType manually
-         * (Cannot add it directly to this.header since this cause problem
-         * when Request-object is used multiple times with first GET, then POST)
+         * Sets the resolved Content-type - This is added as Content-type-header
+         * to AHC if ser has not specified Content-type or mimeType manually
+         * (Cannot add it directly to this.header since this cause problem when
+         * Request-object is used multiple times with first GET, then POST)
          */
         private void setResolvedContentType(String contentType) {
             generatedContentType = contentType;
         }
 
         /**
-         * If generatedContentType is present AND if Content-type header is not already present,
-         * add generatedContentType as Content-Type to headers in requestBuilder
+         * If generatedContentType is present AND if Content-type header is not
+         * already present, add generatedContentType as Content-Type to headers
+         * in requestBuilder
          */
         private void addGeneratedContentType(BoundRequestBuilder requestBuilder) {
-            if (!headers.containsKey("Content-Type") && generatedContentType!=null) {
+            if (!headers.containsKey("Content-Type") && generatedContentType != null) {
                 requestBuilder.addHeader("Content-Type", generatedContentType);
             }
         }
@@ -558,6 +613,7 @@ public class WSAsync implements WSImpl {
 
         /**
          * you shouldnt have to create an HttpResponse yourself
+         * 
          * @param response
          */
         public HttpAsyncResponse(Response response) {
@@ -566,6 +622,7 @@ public class WSAsync implements WSImpl {
 
         /**
          * the HTTP status code
+         * 
          * @return the status code of the http response
          */
         @Override
@@ -575,6 +632,7 @@ public class WSAsync implements WSImpl {
 
         /**
          * the HTTP status text
+         * 
          * @return the status text of the http response
          */
         @Override
@@ -590,15 +648,34 @@ public class WSAsync implements WSImpl {
         @Override
         public List<Header> getHeaders() {
             Map<String, List<String>> hdrs = response.getHeaders();
-            List<Header> result = new ArrayList<Header>();
-            for (String key: hdrs.keySet()) {
+            List<Header> result = new ArrayList<>();
+            for (String key : hdrs.keySet()) {
                 result.add(new Header(key, hdrs.get(key)));
             }
             return result;
         }
 
+        @Override
+        public String getString() {
+            try {
+                return response.getResponseBody(getEncoding());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        @Override
+        public String getString(String encoding) {
+            try {
+                return response.getResponseBody(encoding);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+
         /**
          * get the response as a stream
+         * 
          * @return an inputstream
          */
         @Override
@@ -606,7 +683,10 @@ public class WSAsync implements WSImpl {
             try {
                 return response.getResponseBodyAsStream();
             } catch (IllegalStateException e) {
-                return new ByteArrayInputStream(new byte[]{}); // Workaround AHC's bug on empty responses
+                return new ByteArrayInputStream(new byte[] {}); // Workaround
+                                                                // AHC's bug on
+                                                                // empty
+                                                                // responses
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -630,11 +710,12 @@ public class WSAsync implements WSImpl {
             if (!(request instanceof WSRequest)) {
                 throw new IllegalArgumentException("WSOAuthConsumer expects requests of type play.libs.WS.WSRequest");
             }
-            return new WSRequestAdapter((WSRequest)request);
+            return new WSRequestAdapter((WSRequest) request);
         }
 
-        public WSRequest sign(WSRequest request, String method) throws OAuthMessageSignerException, OAuthExpectationFailedException, OAuthCommunicationException {
-            WSRequestAdapter req = (WSRequestAdapter)wrap(request);
+        public WSRequest sign(WSRequest request, String method)
+                throws OAuthMessageSignerException, OAuthExpectationFailedException, OAuthCommunicationException {
+            WSRequestAdapter req = (WSRequestAdapter) wrap(request);
             req.setMethod(method);
             sign(req);
             return request;
@@ -649,22 +730,32 @@ public class WSAsync implements WSImpl {
                 this.request = request;
             }
 
+            @Override
             public Map<String, String> getAllHeaders() {
                 return request.headers;
             }
 
+            @Override
             public String getContentType() {
                 return request.mimeType;
             }
 
+            @Override
+            public Object unwrap() {
+                return null;
+            }
+
+            @Override
             public String getHeader(String name) {
                 return request.headers.get(name);
             }
 
+            @Override
             public InputStream getMessagePayload() throws IOException {
                 return null;
             }
 
+            @Override
             public String getMethod() {
                 return this.method;
             }
@@ -673,14 +764,17 @@ public class WSAsync implements WSImpl {
                 this.method = method;
             }
 
+            @Override
             public String getRequestUrl() {
                 return request.url;
             }
 
+            @Override
             public void setHeader(String name, String value) {
                 request.setHeader(name, value);
             }
 
+            @Override
             public void setRequestUrl(String url) {
                 request.url = url;
             }

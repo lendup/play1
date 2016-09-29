@@ -1,6 +1,3 @@
-/**
- * 
- */
 package play.libs;
 
 import static org.junit.Assert.*;
@@ -9,7 +6,6 @@ import java.util.List;
 import java.util.concurrent.ExecutionException;
 
 import org.junit.Before;
-import org.junit.Ignore;
 import org.junit.Test;
 
 import play.libs.F.ArchivedEventStream;
@@ -27,18 +23,13 @@ public class ArchivedEventStreamTest {
     
     private ArchivedEventStream<String> stream;
     
-    /**
-     * @throws java.lang.Exception
-     */
     @Before
-    public void setUp() throws Exception {
-        stream = new ArchivedEventStream<String>(100);
+    public void setUp() {
+        stream = new ArchivedEventStream<>(100);
     }
 
     /**
      * Test method for {@link play.libs.F.ArchivedEventStream#publish(java.lang.Object)}.
-     * @throws ExecutionException 
-     * @throws InterruptedException 
      */
     @Test
     public void testPublishMultiple() throws InterruptedException, ExecutionException {

@@ -5,10 +5,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Callable;
-import java.util.concurrent.TimeUnit;
+import java.util.Collections;
 
 import play.Logger;
 import play.Play;
@@ -16,17 +13,14 @@ import play.vfs.VirtualFile;
 import play.exceptions.TemplateCompilationException;
 import play.exceptions.TemplateNotFoundException;
 
-/**
- * Load templates
- */
 public class TemplateLoader {
 
-    protected static Map<String, BaseTemplate> templates = new HashMap<String, BaseTemplate>();
+    protected static Map<String, BaseTemplate> templates = new HashMap<>();
     /**
      * See getUniqueNumberForTemplateFile() for more info
      */
     private static AtomicLong nextUniqueNumber = new AtomicLong(1000);//we start on 1000
-    private static Map<String, String> templateFile2UniqueNumber = new HashMap<String, String>();
+    private static Map<String, String> templateFile2UniqueNumber = Collections.synchronizedMap(new HashMap<String, String>());
 
     /**
      * All loaded templates is cached in the templates-list using a key.
@@ -37,9 +31,9 @@ public class TemplateLoader {
      * This method returns a unique representation of the path which is usable as part of a classname
      *
      * @param path
-     * @return
+     * @return a unique representation of the path which is usable as part of a classname
      */
-    synchronized public static String getUniqueNumberForTemplateFile(String path) {
+    public static String getUniqueNumberForTemplateFile(String path) {
         //a path cannot be a valid classname so we have to convert it somehow.
         //If we did some encoding on the path, the result would be at least as long as the path.
         //Therefor we assign a unique number to each path the first time we see it, and store it..
@@ -67,19 +61,20 @@ public class TemplateLoader {
         }
 
         // Use default engine
-        final String key = getUniqueNumberForTemplateFile(file.relativePath());
+        String fileRelativePath = file.relativePath();
+        String key = getUniqueNumberForTemplateFile(fileRelativePath);
         if (!templates.containsKey(key) || templates.get(key).compiledTemplate == null) {
             if (Play.usePrecompiled) {
-                BaseTemplate template = new GroovyTemplate(file.relativePath().replaceAll("\\{(.*)\\}", "from_$1").replace(":", "_").replace("..", "parent"), file.contentAsString());
+                BaseTemplate template = new GroovyTemplate(fileRelativePath.replaceAll("\\{(.*)\\}", "from_$1").replace(":", "_").replace("..", "parent"), "");
                 try {
                     template.loadPrecompiled();
                     templates.put(key, template);
                     return template;
-                } catch(Exception e) {
-                    Logger.warn("Precompiled template %s not found, trying to load it dynamically...", file.relativePath());
+                } catch (Exception e) {
+                    Logger.warn(e, "Precompiled template %s not found, trying to load it dynamically...", file.relativePath());
                 }
             }
-            BaseTemplate template = new GroovyTemplate(file.relativePath(), file.contentAsString());
+            BaseTemplate template = new GroovyTemplate(fileRelativePath, file.contentAsString());
             if (template.loadFromCache()) {
                 templates.put(key, template);
             } else {
@@ -92,14 +87,14 @@ public class TemplateLoader {
             }
         }
         if (templates.get(key) == null) {
-            throw new TemplateNotFoundException(file.relativePath());
+            throw new TemplateNotFoundException(fileRelativePath);
         }
         return templates.get(key);
     }
 
     /**
      * Load a template from a String
-     * @param key A unique identifier for the template, used for retreiving a cached template
+     * @param key A unique identifier for the template, used for retrieving a cached template
      * @param source The template source
      * @return A Template
      */
@@ -126,7 +121,7 @@ public class TemplateLoader {
     /**
      * Clean the cache for that key
      * Then load a template from a String
-     * @param key A unique identifier for the template, used for retreiving a cached template
+     * @param key A unique identifier for the template, used for retrieving a cached template
      * @param source The template source
      * @return A Template
      */
@@ -172,7 +167,12 @@ public class TemplateLoader {
                 continue;
             }
             VirtualFile tf = vf.child(path);
-            if (tf.exists()) {
+            boolean templateExists = tf.exists();
+            if (!templateExists && Play.usePrecompiled) {
+                String name = tf.relativePath().replaceAll("\\{(.*)\\}", "from_$1").replace(":", "_").replace("..", "parent");
+                templateExists = Play.getFile("precompiled/templates/" + name).exists();
+            }
+            if (templateExists) {
                 template = TemplateLoader.load(tf);
                 break;
             }
@@ -204,11 +204,9 @@ public class TemplateLoader {
      * @return A list of executable templates
      */
     public static List<Template> getAllTemplate() {
-        List<Template> res = new ArrayList<Template>();
-        int cores = Runtime.getRuntime().availableProcessors() + 1;
-        ExecutorService executor = Executors.newFixedThreadPool(cores);
+        List<Template> res = new ArrayList<>();
         for (VirtualFile virtualFile : Play.templatesPath) {
-            scan(res, virtualFile, executor);
+            scan(res, virtualFile);
         }
         for (VirtualFile root : Play.roots) {
             VirtualFile vf = root.child("conf/routes");
@@ -219,43 +217,28 @@ public class TemplateLoader {
                 }
             }
         }
-        executor.shutdown();
-        try {
-            while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                Logger.trace("Waiting for template compiler threads to complete, sleeping 1s...");
-            }
-        } catch (Exception e) {}
         return res;
     }
 
-
-    private static void scan(final List<Template> templates, final VirtualFile current, ExecutorService executor) {
+    private static void scan(List<Template> templates, VirtualFile current) {
         if (!current.isDirectory() && !current.getName().startsWith(".") && !current.getName().endsWith(".scala.html")) {
-            executor.submit(new Callable<Boolean>() {
-                public Boolean call() {
-                    Logger.trace(Thread.currentThread().getName()+" Start. ");
-
-                    long start = System.currentTimeMillis();
-                    Template template = load(current);
-                    if (template != null) {
-                        try {
-                            template.compile();
-                            if (Logger.isTraceEnabled()) {
-                                Logger.trace("%sms to load %s", System.currentTimeMillis() - start, current.getName());
-                            }
-                        } catch (TemplateCompilationException e) {
-                            Logger.error(e, "Template %s does not compile at line %d", e.getTemplate().name, e.getLineNumber());
-                            throw e;
-                        }
+            long start = System.currentTimeMillis();
+            Template template = load(current);
+            if (template != null) {
+                try {
+                    template.compile();
+                    if (Logger.isTraceEnabled()) {
+                        Logger.trace("%sms to load %s", System.currentTimeMillis() - start, current.getName());
                     }
-                    templates.add(template);
-                    Logger.trace(Thread.currentThread().getName()+" End. ");
-                    return true;
+                } catch (TemplateCompilationException e) {
+                    Logger.error("Template %s does not compile at line %d", e.getTemplate().name, e.getLineNumber());
+                    throw e;
                 }
-            });
+                templates.add(template);
+            }
         } else if (current.isDirectory() && !current.getName().startsWith(".")) {
             for (VirtualFile virtualFile : current.list()) {
-                scan(templates, virtualFile, executor);
+                scan(templates, virtualFile);
             }
         }
     }

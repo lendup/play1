@@ -1,4 +1,4 @@
-# Command related to creation and execution: run, new, clean, test, auto-test
+# Command related to creation and execution: run, new, clean
 
 import sys
 import os
@@ -12,15 +12,13 @@ import signal
 
 from play.utils import *
 
-COMMANDS = ['run', 'new', 'clean', 'test', 'autotest', 'auto-test', 'id', 'new,run', 'clean,run', 'modules']
+COMMANDS = ['run', 'new', 'clean', '', 'id', 'new,run', 'clean,run', 'modules']
 
 HELP = {
     'id': "Define the framework ID",
     'new': "Create a new application",
     'clean': "Delete temporary files (including the bytecode cache)",
     'run': "Run the application in the current shell",
-    'test': "Run the application in test mode in the current shell",
-    'auto-test': "Automatically run all application tests",
     'modules': "Display the computed modules list"
 }
 
@@ -164,9 +162,12 @@ def run(app, args):
 
 def clean(app):
     app.check()
-    print "~ Deleting %s" % os.path.normpath(os.path.join(app.path, 'tmp'))
-    if os.path.exists(os.path.join(app.path, 'tmp')):
-        shutil.rmtree(os.path.join(app.path, 'tmp'))
+    tmp = app.readConf('play.tmp')
+    if tmp is None or not tmp.strip():
+        tmp = 'tmp'
+    print "~ Deleting %s" % os.path.normpath(os.path.join(app.path, tmp))
+    if os.path.exists(os.path.join(app.path, tmp)):
+        shutil.rmtree(os.path.join(app.path, tmp))
     print "~"
 
 def show_modules(app, args):

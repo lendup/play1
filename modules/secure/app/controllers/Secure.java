@@ -13,7 +13,7 @@ public class Secure extends Controller {
 
     @Before(unless={"login", "authenticate", "logout"})
     static void checkAccess() throws Throwable {
-        // Authent
+        // Authentication
         if(!session.contains("username")) {
             flash.put("url", "GET".equals(request.method) ? request.url : Play.ctxPath + "/"); // seems a good default
             login();
@@ -86,8 +86,8 @@ public class Secure extends Controller {
         // Remember if needed
         if(remember) {
             Date expiration = new Date();
-            String duration = Play.configuration.getProperty("secure.rememberme.duration","30d"); 
-            expiration.setTime(expiration.getTime() + Time.parseDuration(duration) * 1000 );
+            String duration = Play.configuration.getProperty("secure.rememberme.duration","30d");
+            expiration.setTime(expiration.getTime() + ((long)Time.parseDuration(duration)) * 1000L );
             response.setCookie("rememberme", Crypto.sign(username + "-" + expiration.getTime()) + "-" + username + "-" + expiration.getTime(), duration);
 
         }
@@ -119,7 +119,7 @@ public class Secure extends Controller {
 
         /**
          * @Deprecated
-         * 
+         *
          * @param username
          * @param password
          * @return
@@ -143,7 +143,7 @@ public class Secure extends Controller {
 
         /**
          * This method checks that a profile is allowed to view this page/method. This method is called prior
-         * to the method's controller annotated with the @Check method. 
+         * to the method's controller annotated with the @Check method.
          *
          * @param profile
          * @return true if you are allowed to execute this controller method.
@@ -200,7 +200,7 @@ public class Secure extends Controller {
         private static Object invoke(String m, Object... args) throws Throwable {
 
             try {
-                return Java.invokeChildOrStatic(Security.class, m, args);       
+                return Java.invokeChildOrStatic(Security.class, m, args);
             } catch(InvocationTargetException e) {
                 throw e.getTargetException();
             }
