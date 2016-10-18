@@ -54,7 +54,7 @@ public class Crypto {
     public static String sign(String message, byte[] key) {
 
         if (key.length == 0) {
-            return message;
+            return "";
         }
 
         try {

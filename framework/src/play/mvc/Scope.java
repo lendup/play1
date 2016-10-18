@@ -252,9 +252,9 @@ public class Scope {
                 String sessionData = CookieDataCodec.encode(data);
                 String sign = Crypto.sign(sessionData, Play.secretKey.getBytes());
                 if (COOKIE_EXPIRE == null) {
-                    Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", sign + "-" + sessionData, null, "/", null, COOKIE_SECURE, SESSION_HTTPONLY);
+                    Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", sign + "-_=_&" + sessionData, null, "/", null, COOKIE_SECURE, SESSION_HTTPONLY);
                 } else {
-                    Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", sign + "-" + sessionData, null, "/", Time.parseDuration(COOKIE_EXPIRE), COOKIE_SECURE, SESSION_HTTPONLY);
+                    Http.Response.current().setCookie(COOKIE_PREFIX + "_SESSION", sign + "-_=_&" + sessionData, null, "/", Time.parseDuration(COOKIE_EXPIRE), COOKIE_SECURE, SESSION_HTTPONLY);
                 }
             } catch (Exception e) {
                 throw new UnexpectedException("Session serializationProblem", e);

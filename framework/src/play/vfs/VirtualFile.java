@@ -1,11 +1,10 @@
 package play.vfs;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.InputStream;
-import java.io.OutputStream;
+import play.Play;
+import play.exceptions.UnexpectedException;
+import play.libs.IO;
+
+import java.io.*;
 import java.nio.channels.Channel;
 import java.nio.channels.FileChannel;
 import java.security.AccessControlException;
@@ -17,9 +16,6 @@ import java.util.Map.Entry;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import play.Play;
-import play.exceptions.UnexpectedException;
-import play.libs.IO;
 
 /**
  * The VFS used by Play!
@@ -243,5 +239,24 @@ public class VirtualFile {
         }
 
         return null;
+    }
+
+    /**
+     * Method to check if the name really match (very useful on system without case sensibility (like windows))
+     * @param fileName
+     * @return true if match
+     */
+    public boolean matchName(String fileName) {
+        // we need to check the name case to be sure we is not conflict with a file with the same name
+        String canonicalName = null; 
+        try {
+            canonicalName = this.realFile.getCanonicalFile().getName();
+        } catch (IOException e) {
+        }
+        // Name case match
+        if (fileName != null && canonicalName != null && fileName.endsWith(canonicalName)) {
+            return true;
+        }
+        return false;
     }
 }

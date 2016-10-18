@@ -1,5 +1,6 @@
 package play.classloading;
 
+import org.apache.commons.io.IOUtils;
 import play.Logger;
 import play.Play;
 import play.cache.Cache;
@@ -22,20 +23,9 @@ import java.security.CodeSource;
 import java.security.Permissions;
 import java.security.ProtectionDomain;
 import java.security.cert.Certificate;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.Enumeration;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
+import java.util.*;
+
+import static org.apache.commons.io.IOUtils.closeQuietly;
 
 /**
  * The application classLoader. 
@@ -56,6 +46,8 @@ public class ApplicationClassloader extends ClassLoader {
      * This protection domain applies to all loaded classes.
      */
     public ProtectionDomain protectionDomain;
+
+    private final Object lock = new Object(); 
 
     public ApplicationClassloader() {
         super(ApplicationClassloader.class.getClassLoader());
@@ -78,22 +70,24 @@ public class ApplicationClassloader extends ClassLoader {
      * You know ...
      */
     @Override
-    protected synchronized Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+    protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+        // Loook up our cache
         Class<?> c = findLoadedClass(name);
         if (c != null) {
             return c;
         }
 
-        // First check if it's an application Class
-        Class<?> applicationClass = loadApplicationClass(name);
-        if (applicationClass != null) {
-            if (resolve) {
-                resolveClass(applicationClass);
+        synchronized( lock ) {
+             // First check if it's an application Class
+            Class<?> applicationClass = loadApplicationClass(name);
+            if (applicationClass != null) {
+                if (resolve) {
+                    resolveClass(applicationClass);
+                }
+                return applicationClass;
             }
-            return applicationClass;
         }
-
-        // Delegate to the classic classloader
+        // Delegate tothe classic classloader
         return super.loadClass(name, resolve);
     }
 
@@ -204,8 +198,8 @@ public class ApplicationClassloader extends ClassLoader {
         } else {
             className = "package-info";
         }
-        if (findLoadedClass(className) == null) {
-            loadApplicationClass(className);
+        if (this.findLoadedClass(className) == null) {
+            this.loadApplicationClass(className);
         }
     }
 
@@ -214,7 +208,7 @@ public class ApplicationClassloader extends ClassLoader {
      */
     protected byte[] getClassDefinition(String name) {
         name = name.replace(".", "/") + ".class";
-        InputStream is = getResourceAsStream(name);
+        InputStream is = this.getResourceAsStream(name);
         if (is == null) {
             return null;
         }
@@ -394,8 +388,8 @@ public class ApplicationClassloader extends ClassLoader {
      * @return The list of well defined Class
      */
     public List<Class> getAllClasses() {
-        if (!allClassesInitialized) {
-            allClassesInitialized = true;
+        if (allClasses == null) {
+            allClasses = new ArrayList<Class>();
 
             if (Play.usePrecompiled) {
 
@@ -412,7 +406,7 @@ public class ApplicationClassloader extends ClassLoader {
 
             } else {
 
-                if(!Play.pluginCollection.compileSources()) {
+                if (!Play.pluginCollection.compileSources()) {
 
                     List<ApplicationClass> all = new ArrayList<ApplicationClass>();
 
@@ -421,7 +415,7 @@ public class ApplicationClassloader extends ClassLoader {
                     }
                     List<String> classNames = new ArrayList<String>();
                     for (int i = 0; i < all.size(); i++) {
-                            ApplicationClass applicationClass = all.get(i);
+                        ApplicationClass applicationClass = all.get(i);
                         if (applicationClass != null && !applicationClass.compiled && applicationClass.isClass()) {
                             classNames.add(all.get(i).name);
                         }
@@ -431,52 +425,10 @@ public class ApplicationClassloader extends ClassLoader {
 
                 }
 
-                if (Boolean.parseBoolean(System.getenv("DISABLE_PARALLEL_CLASSLOADING"))) {
-                    for (ApplicationClass applicationClass : Play.classes.all()) {
-                        Class clazz = loadApplicationClass(applicationClass.name);
-                        if (clazz != null) {
-                            allClasses.add(clazz);
-                        }
-                    }
-                } else {
-                    int cores = Runtime.getRuntime().availableProcessors() + 1;
-                    String envCores = System.getenv("PARALLEL_CLASSLOADING_THREADS");
-                    if (envCores != null) {
-                        try {
-                            cores = Integer.parseInt(envCores);
-                        } catch (NumberFormatException ignored) {
-                        }
-                    }
-                    final ExecutorService executor = Executors.newFixedThreadPool(cores);
-
-                    Logger.info("Using %d cores.", cores);
-
-                    List<Future<Class>> futures = new LinkedList<Future<Class>>();
-
-                    for (final ApplicationClass applicationClass : Play.classes.all()) {
-                        futures.add(executor.submit(new Callable<Class>() {
-                            @Override
-                            public Class call() {
-                                return loadApplicationClass(applicationClass.name);
-                            }
-                        }));
-                    }
-
-                    executor.shutdown();
-                    try {
-                        while (!executor.awaitTermination(1, TimeUnit.SECONDS)) {
-                            Logger.trace("Waiting for class enhancer threads to complete, sleeping 1s...");
-                        }
-
-                        for (Future<Class> future:futures) {
-                            Class clazz = future.get();
-
-                            if (clazz != null) {
-                                allClasses.add(clazz);
-                            }
-                        }
-                    } catch (Exception e) {
-                        Logger.error(e, "Class enhancer thread failed!");
+                for (ApplicationClass applicationClass : Play.classes.all()) {
+                    Class clazz = loadApplicationClass(applicationClass.name);
+                    if (clazz != null) {
+                        allClasses.add(clazz);
                     }
                 }
 
@@ -490,8 +442,7 @@ public class ApplicationClassloader extends ClassLoader {
         }
         return allClasses;
     }
-    boolean allClassesInitialized = false;
-    final List<Class> allClasses = new ArrayList<Class>();
+    List<Class> allClasses = null;
 
     /**
      * Retrieve all application classes assignable to this class.

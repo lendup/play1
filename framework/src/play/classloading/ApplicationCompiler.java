@@ -50,23 +50,28 @@ public class ApplicationCompiler {
         this.settings.put(CompilerOptions.OPTION_ReportUnusedImport, CompilerOptions.IGNORE);
         this.settings.put(CompilerOptions.OPTION_Encoding, "UTF-8");
         this.settings.put(CompilerOptions.OPTION_LocalVariableAttribute, CompilerOptions.GENERATE);
-        String javaVersion = CompilerOptions.VERSION_1_5;
+        String javaTarget = CompilerOptions.VERSION_1_6;
         if(System.getProperty("java.version").startsWith("1.6")) {
-            javaVersion = CompilerOptions.VERSION_1_6;
+            javaTarget = CompilerOptions.VERSION_1_6;
         } else if (System.getProperty("java.version").startsWith("1.7")) {
-            javaVersion = CompilerOptions.VERSION_1_7;
+            javaTarget = CompilerOptions.VERSION_1_7;
+        } else if (System.getProperty("java.version").startsWith("1.8")) {
+            javaTarget = CompilerOptions.VERSION_1_8;
         }
+        String javaSource = CompilerOptions.VERSION_1_6;
         if("1.5".equals(Play.configuration.get("java.source"))) {
-            javaVersion = CompilerOptions.VERSION_1_5;
+            javaSource = CompilerOptions.VERSION_1_5;
         } else if("1.6".equals(Play.configuration.get("java.source"))) {
-            javaVersion = CompilerOptions.VERSION_1_6;
+            javaSource = CompilerOptions.VERSION_1_6;
         } else if("1.7".equals(Play.configuration.get("java.source"))) {
-            javaVersion = CompilerOptions.VERSION_1_7;
+            javaSource = CompilerOptions.VERSION_1_7;
+        }else if("1.8".equals(Play.configuration.get("java.source"))) {
+            javaSource = CompilerOptions.VERSION_1_8;
         }
-        this.settings.put(CompilerOptions.OPTION_Source, javaVersion);
-        this.settings.put(CompilerOptions.OPTION_TargetPlatform, javaVersion);
+        this.settings.put(CompilerOptions.OPTION_Source, javaSource);
+        this.settings.put(CompilerOptions.OPTION_TargetPlatform, javaTarget);
         this.settings.put(CompilerOptions.OPTION_PreserveUnusedLocal, CompilerOptions.PRESERVE);
-        this.settings.put(CompilerOptions.OPTION_Compliance, javaVersion);
+        this.settings.put(CompilerOptions.OPTION_Compliance, javaTarget);
     }
 
     /**
@@ -112,6 +117,12 @@ public class ApplicationCompiler {
 
         public char[][] getPackageName() {
             return packageName;
+        }
+
+        @Override
+        public boolean ignoreOptionalProblems() {
+            // TODO Auto-generated method stub
+            return false;
         }
     }
 

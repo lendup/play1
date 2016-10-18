@@ -3,6 +3,8 @@
 <project name="play! framework" default="jar" basedir=".">
 
     <property name="baseversion" value="1.2.x" />
+    <property name="java.source" value="1.5" />
+    <property name="java.target" value="1.5" />
 
     <path id="project.classpath">
         <fileset dir=".">
@@ -56,7 +58,7 @@
             <arg value="describe" />
             <arg value="--always" />
         </exec>
-        <condition property="version" value="${baseversion}-${gitversion}" else="${baseversion}-localbuild">
+        <condition property="version" value="${baseversion}-${gitversion}-java${java.target}" else="${baseversion}-localbuild">
             <equals arg1="" arg2="${giterror}" trim="true" />
         </condition>
         <echo message="Version ${version}"></echo>
@@ -64,7 +66,7 @@
 
     <target name="compile" description="compile without cleaning">
         <mkdir dir="classes"/>
-        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" source="1.5" target="1.5">
+        <javac encoding="utf-8" srcdir="src" destdir="classes" debug="true" source="${java.source}" target="${java.target}">
             <classpath refid="project.classpath" />
         </javac>
         <copy todir="classes">
@@ -342,7 +344,7 @@
 
     <target name="compile-unittest" depends="compile">
         <mkdir dir="test-classes"/>
-        <javac encoding="utf-8" srcdir="test-src" destdir="test-classes" debug="true" target="1.5">
+        <javac encoding="utf-8" srcdir="test-src" destdir="test-classes" debug="true" source="${java.source}" target="${java.target}">
             <classpath refid="classpath.test" />
         </javac>
         <copy todir="test-classes">
