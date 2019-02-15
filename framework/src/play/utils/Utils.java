@@ -119,8 +119,8 @@ public class Utils {
     public static SimpleDateFormat getHttpDateFormatter() {
         if (httpFormatter.get() == null) {
             httpFormatter.set(new SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss zzz", Locale.US));
-            httpFormatter.get().setTimeZone(TimeZone.getTimeZone("GMT"));
         }
+        httpFormatter.get().setTimeZone(TimeZone.getTimeZone("GMT"));
         return httpFormatter.get();
     }
 
